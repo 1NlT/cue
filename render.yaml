@@ -3,7 +3,7 @@ services:
     name: cue-api
     runtime: node
     region: singapore
-    plan: 0.5c-512mb
+    plan: free
     rootDir: server
     buildCommand: npm ci --omit=dev
     startCommand: npm start

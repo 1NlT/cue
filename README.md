@@ -37,7 +37,7 @@ flutter run --release -d 00008140-000E65980C10801C --dart-define=CUE_API_URL=htt
 
 ## 서버 배포 (Render)
 
-저장소 루트의 `render.yaml`은 싱가포르 지역의 상시 실행 Node 웹 서비스를 설정합니다. Render Dashboard에서 GitHub 저장소 `1NlT/cue`의 Blueprint를 만들고, 생성 화면에서 `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`를 비밀 환경변수로 입력합니다. 키 값은 Git에 넣지 않습니다. 이 설정은 유료 `0.5c-512mb` 플랜을 사용하므로 생성 전 요금을 확인하세요. 무료 서비스는 유휴 시 잠들어 첫 요청이 지연됩니다.
+저장소 루트의 `render.yaml`은 싱가포르 지역의 무료 Node 웹 서비스를 설정합니다. Render Dashboard에서 GitHub 저장소 `1NlT/cue`의 Blueprint를 만들고, 생성 화면에서 `OPENAI_API_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`를 환경변수로 입력합니다. 키 값은 Git에 넣지 않습니다. 무료 서비스는 유휴 시 잠들어 첫 요청이 지연될 수 있으므로 앱은 서버 시작을 기다릴 수 있어야 합니다.
 
 배포가 끝나면 `https://<배포된 호스트>/health`가 `{"ok":true}`를 반환하는지 확인합니다. 앱은 빌드 시 `--dart-define=CUE_API_URL=https://<배포된 호스트>`를 지정하고, 기존 Supabase URL 및 publishable key도 그대로 전달해 다시 설치합니다. 기존 설치 앱에 포함된 Mac `.local` 주소는 서버 배포만으로 바뀌지 않습니다. `CUE_CLOUD_REQUIRED=1`은 배포 필수 키가 빠진 경우 시작을 막고, 로컬 토큰으로 임시 SQLite 계정이 생성되는 것을 막습니다. SQLite 파일은 호스트 재시작 시 사라질 수 있으므로 사용자 데이터는 Supabase를 사용합니다.
 
