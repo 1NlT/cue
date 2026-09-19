@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: cue-api
+    runtime: node
+    region: singapore
+    plan: 0.5c-512mb
+    rootDir: server
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: 22.22.0
+      - key: CUE_CLOUD_REQUIRED
+        value: "1"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

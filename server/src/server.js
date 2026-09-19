@@ -11,6 +11,10 @@ const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || '';
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+if (process.env.CUE_CLOUD_REQUIRED === '1' &&
+    (!process.env.OPENAI_API_KEY || !supabaseUrl || !supabasePublishableKey || !supabaseServiceRoleKey)) {
+  throw new Error('Cue cloud deployment requires OpenAI and Supabase server environment variables.');
+}
 const rate = new Map();
 
 function send(res, status, body) {
@@ -34,7 +38,7 @@ async function readJson(req, maxBytes = 8 * 1024 * 1024) {
 function hash(value) { return createHash('sha256').update(value).digest('hex'); }
 async function userFor(req) {
   const token = String(req.headers.authorization || '').replace(/^Bearer /, '');
-  if (/^[a-f0-9]{64}$/.test(token)) return store.userByTokenHash(hash(token));
+  if (process.env.CUE_CLOUD_REQUIRED !== '1' && /^[a-f0-9]{64}$/.test(token)) return store.userByTokenHash(hash(token));
   if (!supabaseUrl || !supabasePublishableKey || !token || token.length > 4096) return null;
   try {
     const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/user`, {
