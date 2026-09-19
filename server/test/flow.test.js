@@ -39,6 +39,9 @@ test('analysis stops after rejection and approved interests drive recommendation
     const session = await request('/v1/session', null, {});
     assert.equal(session.status, 201);
     const token = session.body.token;
+    for (let i = 0; i < 95; i += 1) {
+      assert.equal((await request('/v1/me', token, null, 'GET')).status, 200);
+    }
     const image = { image: 'data:image/jpeg;base64,AA==', timezoneOffsetMinutes: 540 };
 
     answers.push({ is_event: false });

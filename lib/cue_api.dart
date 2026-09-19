@@ -72,9 +72,13 @@ class CueApi {
       if (_token == null) throw const CueApiException('익명 사용자 연결에 실패했습니다.');
       final legacyToken = prefs.getString('cue_session_token');
       if (legacyToken != null) {
-        await _request('POST', '/v1/account/claim', {
-          'legacyToken': legacyToken,
-        });
+        try {
+          await _request('POST', '/v1/account/claim', {
+            'legacyToken': legacyToken,
+          });
+        } on CueApiException catch (error) {
+          if (error.status != 404) rethrow;
+        }
         await prefs.remove('cue_session_token');
       }
       await get('/v1/me');

@@ -141,11 +141,12 @@ async function askOpenAI(sourceParts, instruction, schema, name) {
 export const server = http.createServer(async (req, res) => {
   try {
     const route = new URL(req.url, 'http://localhost').pathname;
+
     if (req.method === 'GET' && route === '/health') return send(res, 200, { ok: true });
     const ip = req.socket.remoteAddress || 'unknown';
-    if (!allowed(`ip:${ip}`, 90, 60 * 60 * 1000)) return send(res, 429, { error: '요청이 너무 많습니다.' });
 
     if (req.method === 'POST' && route === '/v1/session') {
+      if (!allowed(`session:${ip}`, 20, 60 * 60 * 1000)) return send(res, 429, { error: '요청이 너무 많습니다.' });
       if (supabaseUrl && supabasePublishableKey) return send(res, 403, { error: 'Supabase 익명 로그인을 사용해 주세요.' });
       const token = randomBytes(32).toString('hex');
       const id = randomUUID();
@@ -154,6 +155,7 @@ export const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && route === '/v1/catalog/import') {
+      if (!allowed(`catalog:${ip}`, 30, 60 * 60 * 1000)) return send(res, 429, { error: '요청이 너무 많습니다.' });
       const given = String(req.headers.authorization || '').replace(/^Bearer /, '');
       const admin = process.env.CATALOG_ADMIN_TOKEN || '';
       if (!admin || given.length !== admin.length || !timingSafeEqual(Buffer.from(given), Buffer.from(admin))) return send(res, 403, { error: '관리자 인증이 필요합니다.' });
@@ -167,6 +169,7 @@ export const server = http.createServer(async (req, res) => {
 
     const user = await userFor(req);
     if (!user) return send(res, 401, { error: '다시 로그인해 주세요.' });
+    if (!allowed(`user:${user.id}`, 300, 60 * 60 * 1000)) return send(res, 429, { error: '요청이 너무 많습니다.' });
     if (req.method === 'POST' && route === '/v1/account/claim') {
       if (!user.supabase) return send(res, 403, { error: 'Supabase 인증이 필요합니다.' });
       const body = await readJson(req, 4096);
