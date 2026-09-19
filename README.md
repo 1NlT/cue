@@ -5,7 +5,7 @@
 ## 구성
 
 - `lib/`: Flutter 앱. 카메라/사진첩/문서 선택, 후보 선택과 직접 수정, 캘린더 저장과 저장된 일정의 수정·취소, 개인화 피드백, 라이트/다크 테마와 일정 기본값 설정.
-- `server/`: Node.js 22.13+ API. OpenAI 호출, 익명 사용자 식별, 문서 텍스트 추출, 사용자별 SQLite 저장소와 개인화 서비스.
+- `server/`: Node.js 22.13+ API. OpenAI 호출, Supabase 익명 사용자 식별, 문서 텍스트 추출, Supabase PostgreSQL 저장소와 개인화 서비스. Supabase를 설정하지 않은 로컬 테스트에서는 SQLite를 사용합니다.
 - `supabase/migrations/`: Supabase PostgreSQL 테이블·RLS·인덱스·프로필 생성 트리거.
 - OpenAI 키는 **서버 프로세스의 `OPENAI_API_KEY` 환경변수에만** 둡니다. 앱에는 서버 URL만 전달합니다. `server/setup_key.command`에서 화면에 표시되지 않는 입력으로 키를 받아 권한 `600`의 `server/.env`에 보관하고, 서버 시작 시 환경변수로 읽습니다. 이 파일은 Git에서 제외됩니다.
 
@@ -33,7 +33,7 @@ flutter run --dart-define=CUE_API_URL=http://10.0.2.2:8787
 flutter run --release -d 00008140-000E65980C10801C --dart-define=CUE_API_URL=http://gimnagyun-ui-MacBookAir.local:8788
 ```
 
-위 iPhone 주소는 같은 로컬 네트워크에서 테스트하기 위한 것입니다. Mac 서버를 종료하거나 네트워크가 바뀌면 분석할 수 없습니다. 외부 배포에서는 HTTPS 서버 주소를 사용하세요. 개발용 Android 디버그 빌드에서만 일반 HTTP 연결을 허용합니다. 사용자 데이터는 기본적으로 권한 `600`의 `server/data/cue.sqlite`에 저장됩니다. 기존 `cue.json`이 있으면 새 DB의 첫 시작에서 사용자 토큰·저장 일정·추천 목록을 한 번 가져옵니다. 원본 JSON은 백업으로 남고 두 파일 모두 Git에서 제외됩니다.
+위 iPhone 주소는 같은 로컬 네트워크에서 테스트하기 위한 것입니다. Mac 서버를 종료하거나 네트워크가 바뀌면 분석할 수 없습니다. 외부 배포에서는 HTTPS 서버 주소를 사용하세요. 개발용 Android 디버그 빌드에서만 일반 HTTP 연결을 허용합니다. Supabase 설정이 없는 로컬 테스트 데이터는 권한 `600`의 `server/data/cue.sqlite`에 저장됩니다. 기존 `cue.json`이 있으면 새 DB의 첫 시작에서 사용자 토큰·저장 일정·추천 목록을 한 번 가져옵니다. 원본 JSON은 백업으로 남고 두 파일 모두 Git에서 제외됩니다.
 
 ## 사용자 기억과 추천
 
@@ -44,7 +44,7 @@ flutter run --release -d 00008140-000E65980C10801C --dart-define=CUE_API_URL=htt
 
 ## Supabase 연결
 
-`supabase/migrations/20260919000000_cue_memory.sql`을 프로젝트 SQL Editor에서 실행하고 익명 로그인을 활성화합니다. `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`를 서버 환경변수(또는 Git에서 제외된 `server/.env`)와 Flutter `--dart-define`에 지정하면 앱이 Supabase Auth 익명 사용자를 만들고 서버가 JWT를 검증합니다. `profiles` 행은 가입 트리거로 생성되며 앱의 설정 화면에 연결 상태와 사용자 ID를 표시합니다. 프로필 설정은 Supabase와 서버 저장소에 반영됩니다. 기존 설치별 토큰의 데이터는 인증된 새 사용자에게 한 번 연결됩니다. **행사·관심도·추천 등의 실제 저장소는 아직 서버 SQLite이므로** 다중 기기 동기화는 다음 단계에서 완료해야 합니다. Flutter에는 공개용 URL·publishable key만 들어가며 service-role key와 OpenAI 키는 넣지 않습니다.
+SQL 마이그레이션을 프로젝트 SQL Editor에서 실행하고 익명 로그인을 활성화합니다. `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`를 서버 환경변수(또는 Git에서 제외된 `server/.env`)와 Flutter `--dart-define`에 지정하면 앱이 Supabase Auth 익명 사용자를 만들고 서버가 JWT를 검증합니다. `profiles` 행은 가입 트리거로 생성됩니다. 행사·목표·상호작용은 사용자의 JWT와 RLS로 저장됩니다. 관심도·Memory·추천 계산 결과는 백엔드가 사용자 ID를 검증한 뒤 서버 전용 `SUPABASE_SERVICE_ROLE_KEY`로 저장합니다. 기존 SQLite 사용자 데이터는 해당 사용자의 첫 클라우드 요청 때 한 번 이전합니다. 공유 행사 목록 등록과 Auth 계정 삭제에도 서버 전용 키가 필요합니다. Flutter에는 공개용 URL·publishable key만 들어가며 비밀 키와 OpenAI 키는 넣지 않습니다. 설정 화면에서 연결 상태와 사용자 ID를 확인할 수 있습니다.
 
 ## 추천 행사 등록
 

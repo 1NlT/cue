@@ -4,6 +4,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { cleanExtraction, validateSavedEvent } from './domain.js';
 import { documentInput } from './document.js';
 import { store } from './store.js';
+import { CloudStore, importCloudCatalog } from './cloud-store.js';
 
 const port = Number(process.env.PORT || 8787);
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
@@ -155,6 +156,7 @@ export const server = http.createServer(async (req, res) => {
       const body = await readJson(req, 128 * 1024);
       if (!Array.isArray(body.events) || body.events.length > 100) return send(res, 400, { error: 'events 배열이 필요합니다.' });
       const events = body.events.map(validateSavedEvent);
+      if (supabaseUrl && supabasePublishableKey) await importCloudCatalog(events);
       store.importCatalog(events);
       return send(res, 200, { count: events.length });
     }
@@ -179,11 +181,13 @@ export const server = http.createServer(async (req, res) => {
         return send(res, 404, { error: '이전 사용자 데이터를 찾지 못했습니다.' });
       return send(res, 200, { claimed: true });
     }
+    const data = user.supabase ? new CloudStore(user) : store;
+    if (user.supabase) await data.migrateLocal(store);
     if (req.method === 'GET' && route === '/v1/me') {
       const profile = user.supabase ? await cloudProfile(user) : store.profile(user.id);
       return send(res, 200, {
         userId: user.id, cloudConnected: !!user.supabase,
-        profile, saved: store.saved(user.id), interests: store.interests(user.id),
+        profile, saved: await data.saved(user.id), interests: await data.interests(user.id),
       });
     }
     if (req.method === 'PATCH' && route === '/v1/profile') {
@@ -199,27 +203,28 @@ export const server = http.createServer(async (req, res) => {
         updated_at: new Date().toISOString(),
       };
       const profile = await cloudProfile(user, changes);
+      await data.onProfileChanged(previous, profile);
       store.updateProfile(user.id, profile);
       return send(res, 200, { profile });
     }
-    if (req.method === 'GET' && route === '/v1/recommendations') return send(res, 200, { events: store.recommendations(user.id) });
-    if (req.method === 'GET' && route === '/v1/memories') return send(res, 200, { memories: store.memories(user.id) });
-    if (req.method === 'GET' && route === '/v1/goals') return send(res, 200, { goals: store.goals(user.id) });
+    if (req.method === 'GET' && route === '/v1/recommendations') return send(res, 200, { events: await data.recommendations(user.id) });
+    if (req.method === 'GET' && route === '/v1/memories') return send(res, 200, { memories: await data.memories(user.id) });
+    if (req.method === 'GET' && route === '/v1/goals') return send(res, 200, { goals: await data.goals(user.id) });
     if (req.method === 'POST' && route === '/v1/goals') {
       const body = await readJson(req, 4096);
       const eventId = String(body.eventId || '');
-      const event = store.eventVisible(user.id, eventId);
+      const event = await data.eventVisible(user.id, eventId);
       if (!event) return send(res, 404, { error: '행사를 찾을 수 없습니다.' });
       const title = String(body.title || `${event.title} 계획`).trim().slice(0,120);
       if (!title) return send(res, 400, { error: '목표 이름이 필요합니다.' });
-      return send(res, 201, { goal: store.createGoal(user.id,eventId,title) });
+      return send(res, 201, { goal: await data.createGoal(user.id,eventId,title) });
     }
     if (req.method === 'POST' && route === '/v1/interactions') {
       const body = await readJson(req, 4096);
       const action = String(body.action || '');
       if (!['viewed','interested','not_interested','recommendation_opened','recommendation_dismissed','completed'].includes(action))
         return send(res, 400, { error: '지원하지 않는 행동입니다.' });
-      if (!store.interact(user.id,String(body.eventId || ''),action)) return send(res, 404, { error: '행사를 찾을 수 없습니다.' });
+      if (!(await data.interact(user.id,String(body.eventId || ''),action))) return send(res, 404, { error: '행사를 찾을 수 없습니다.' });
       return send(res, 201, { recorded: true });
     }
     if (req.method === 'DELETE' && route === '/v1/account') {
@@ -260,17 +265,17 @@ export const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && route === '/v1/events') {
       const body = await readJson(req, 16 * 1024);
       const event = validateSavedEvent(body);
-      store.save(user.id,event);
+      await data.save(user.id,event);
       return send(res, 201, { event });
     }
     const eventRoute = /^\/v1\/events\/([0-9a-f-]{36})$/.exec(route);
     if (eventRoute && ['PATCH', 'DELETE'].includes(req.method)) {
       if (req.method === 'DELETE') {
-        if (!store.removeSaved(user.id,eventRoute[1])) return send(res, 404, { error: '저장된 일정을 찾을 수 없습니다.' });
+        if (!(await data.removeSaved(user.id,eventRoute[1]))) return send(res, 404, { error: '저장된 일정을 찾을 수 없습니다.' });
         return send(res, 200, { deleted: true });
       }
       const body = await readJson(req, 16 * 1024);
-      const event = store.updateSaved(user.id,eventRoute[1],validateSavedEvent(body));
+      const event = await data.updateSaved(user.id,eventRoute[1],validateSavedEvent(body));
       if (!event) return send(res, 404, { error: '저장된 일정을 찾을 수 없습니다.' });
       return send(res, 200, { event });
     }

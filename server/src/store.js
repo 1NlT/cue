@@ -11,6 +11,7 @@ if (databasePath !== ':memory:') fs.chmodSync(databasePath, 0o600);
 db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS cloud_sync_state (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, synced_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   onboarding_completed INTEGER NOT NULL DEFAULT 0, personalization_enabled INTEGER NOT NULL DEFAULT 1,
   recommendation_enabled INTEGER NOT NULL DEFAULT 1, locale TEXT NOT NULL DEFAULT 'ko-KR',
@@ -122,6 +123,10 @@ export const store = {
   ensureSupabaseUser(userId) {
     if (db.prepare('SELECT id FROM users WHERE id=?').get(userId)) return;
     this.createUser(userId, createHash('sha256').update(`supabase:${userId}`).digest('hex'));
+  },
+  cloudSynced(userId) { return !!db.prepare('SELECT 1 FROM cloud_sync_state WHERE user_id=?').get(userId); },
+  markCloudSynced(userId) {
+    db.prepare('INSERT OR REPLACE INTO cloud_sync_state(user_id,synced_at) VALUES(?,?)').run(userId, now());
   },
   claimLegacyAccount(userId, legacyTokenHash) {
     const old = this.userByTokenHash(legacyTokenHash);
@@ -282,6 +287,21 @@ export const store = {
     return { id,userId,relatedEventId:eventId,title,status:'active',createdAt:timestamp };
   },
   goals(userId) { return db.prepare('SELECT * FROM goals WHERE user_id=? ORDER BY created_at DESC').all(userId); },
+  exportUser(userId) {
+    const rows = (table, column = 'user_id') => db.prepare(`SELECT * FROM ${table} WHERE ${column}=?`).all(userId);
+    const events = rows('events', 'owner_user_id').map((row) => ({ ...row, tags: JSON.parse(row.tags || '[]') }));
+    const eventIds = new Set(events.map((event) => event.id));
+    return {
+      events,
+      event_sessions: db.prepare('SELECT * FROM event_sessions').all().filter((row) => eventIds.has(row.event_id)),
+      user_events: rows('user_events').filter((row) => eventIds.has(row.event_id)),
+      event_interactions: rows('event_interactions').filter((row) => eventIds.has(row.event_id))
+        .map((row) => ({ ...row, metadata: JSON.parse(row.metadata || '{}') })),
+      interest_profiles: rows('interest_profiles'), goals: rows('goals'), tasks: rows('tasks'),
+      agent_memories: rows('agent_memories'),
+      recommendations: rows('recommendations').filter((row) => eventIds.has(row.event_id)),
+    };
+  },
   deleteAccount(userId) { db.prepare('DELETE FROM users WHERE id=?').run(userId); },
   close() { db.close(); },
 };
