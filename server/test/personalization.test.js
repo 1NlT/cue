@@ -24,6 +24,15 @@ test('topic tags contribute to interest separately from broad categories', () =>
   assert.equal(scores.get('Programming').score, 2.4);
 });
 
+test('canceling a calendar entry does not erase topic interest', () => {
+  const timestamp = '2027-01-01T00:00:00Z';
+  const scores = interestSignals([
+    { action: 'saved', category: '전시', created_at: timestamp },
+    { action: 'unsaved', category: '전시', created_at: timestamp },
+  ], Date.parse(timestamp));
+  assert.equal(scores.get('전시').score, 3);
+});
+
 test('recommendations filter expired deadlines and saved schedule conflicts', () => {
   const event = (id, startsAt, endsAt, deadline = null) =>
     ({ id, title: id, category: '음악', startsAt, endsAt, applicationDeadline: deadline });

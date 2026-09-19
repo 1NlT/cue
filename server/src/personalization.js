@@ -1,10 +1,11 @@
 // Raw interactions are kept in the store; these rules can change without changing the schema.
+import { categoryGroup } from './categories.js';
 export const personalizationRules = Object.freeze({
   decayDays: 90,
   interestWeights: Object.freeze({
     viewed: 0.2, recommendation_opened: 0.3, interested: 2,
     saved: 4, plan_created: 5, completed: 4,
-    not_interested: -3, recommendation_dismissed: -2, unsaved: -4,
+    not_interested: -3, recommendation_dismissed: -2, unsaved: -1,
   }),
 });
 
@@ -28,14 +29,23 @@ export function interestSignals(interactions, currentTime = Date.now()) {
 }
 
 export function rankRecommendations({ catalog, saved, interests, excluded, currentTime = Date.now() }) {
+  const categoryScore = (category) => {
+    const exact = interests.get(category) || 0;
+    const family = categoryGroup(category);
+    if (family === '기타' || category === family) return exact;
+    const related = Math.max(0, ...[...interests.entries()]
+      .filter(([key]) => categoryGroup(key) === family)
+      .map(([, score]) => score));
+    return exact + related * 0.55;
+  };
   return catalog
     .filter((event) => Date.parse(event.endsAt) > currentTime &&
       (!event.applicationDeadline || Date.parse(event.applicationDeadline) > currentTime) &&
       !excluded.has(event.id) &&
-      !saved.some((own) => own.title === event.title && own.startsAt === event.startsAt) &&
+      !saved.some((own) => own.title === event.title) &&
       !saved.some((own) => Date.parse(own.startsAt) < Date.parse(event.endsAt) &&
         Date.parse(event.startsAt) < Date.parse(own.endsAt)))
-    .map((event) => ({ ...event, score: (interests.get(event.category) || 0) +
+    .map((event) => ({ ...event, score: categoryScore(event.category) +
       Math.max(0,...(event.tags || []).map((tag) => interests.get(tag) || 0)) * 0.6 }))
     .filter((event) => event.score > 0)
     .sort((a, b) => b.score - a.score || Date.parse(a.startsAt) - Date.parse(b.startsAt))

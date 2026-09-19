@@ -9,8 +9,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timezone/timezone.dart' as tz;
+import 'package:url_launcher/url_launcher.dart';
 
 import 'cue_api.dart';
+import 'cue_categories.dart';
 import 'cue_splash.dart';
 import 'saved_event_editor.dart';
 
@@ -135,6 +137,7 @@ class _CueHomeState extends State<CueHome> {
   bool saving = false;
   bool personalizationEnabled = true;
   bool recommendationEnabled = true;
+  bool recommendationLoading = false;
   String? userId;
   bool cloudConnected = false;
   String? busyEventId;
@@ -180,6 +183,7 @@ class _CueHomeState extends State<CueHome> {
   }
 
   Future<void> _refresh() async {
+    if (mounted) setState(() => recommendationLoading = true);
     try {
       await api.init();
       final prefs = await SharedPreferences.getInstance();
@@ -214,10 +218,16 @@ class _CueHomeState extends State<CueHome> {
             .toList();
         recommended = (recs['events'] as List<dynamic>? ?? [])
             .cast<Map<String, dynamic>>();
+        recommendationLoading = false;
         apiError = null;
       });
     } catch (error) {
-      if (mounted) setState(() => apiError = error.toString());
+      if (mounted) {
+        setState(() {
+          recommendationLoading = false;
+          apiError = error.toString();
+        });
+      }
     }
   }
 
@@ -1059,7 +1069,7 @@ class _CueHomeState extends State<CueHome> {
                   labelText: '행사 종류',
                   prefixIcon: Icon(Icons.category_outlined),
                 ),
-                items: ['음악', '전시', '공연', '스포츠', '음식', '교육', '커뮤니티', '기타']
+                items: cueCategories
                     .map(
                       (value) =>
                           DropdownMenuItem(value: value, child: Text(value)),
@@ -1316,16 +1326,18 @@ class _CueHomeState extends State<CueHome> {
           borderRadius: BorderRadius.circular(16),
         ),
         child: Text(
-          'Cue는 저장·관심 표시 등 선택을 기억해 취향을 조금씩 파악해요. 추천은 등록된 행사 중에서 골라 보여줍니다.',
+          'Cue가 저장한 일정에서 관심사를 찾고, 공식 행사 안내를 확인해 다음 행사를 추천해요.',
           style: TextStyle(color: accent, height: 1.5),
         ),
       ),
       SizedBox(height: 18),
-      if (recommended.isEmpty)
+      if (recommendationLoading && recommended.isEmpty)
+        _empty(Icons.auto_awesome, '공식 행사 찾는 중', '관심사와 일정이 맞는 행사를 확인하고 있어요.'),
+      if (!recommendationLoading && recommended.isEmpty)
         _empty(
           Icons.explore_outlined,
           '아직 추천할 행사가 없어요',
-          '일정을 저장하고 행사 목록이 채워지면 여기에서 알려드릴게요.',
+          '공식 안내에서 확인된 행사가 없어요. 나중에 새로고침해 주세요.',
         ),
       for (final event in recommended) ...[
         _eventTile(event, recommended: true),
@@ -1554,6 +1566,19 @@ class _CueHomeState extends State<CueHome> {
             Text(
               event['reason'] as String,
               style: TextStyle(color: muted, fontSize: 13),
+            ),
+          ],
+          if (recommended && event['sourceUrl'] is String) ...[
+            SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: () async {
+                final url = Uri.tryParse(event['sourceUrl'] as String);
+                if (url == null || !await launchUrl(url, mode: LaunchMode.externalApplication)) {
+                  _message('공식 안내 페이지를 열 수 없습니다.');
+                }
+              },
+              icon: Icon(Icons.open_in_new, size: 18),
+              label: Text('공식 안내 확인'),
             ),
           ],
           if (!recommended) ...[

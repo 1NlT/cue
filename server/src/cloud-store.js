@@ -225,7 +225,13 @@ export class CloudStore {
   async recommendations() {
     const profile = await this.one('profiles', { user_id: eq(this.userId) });
     if (!profile?.personalization_enabled || !profile.recommendation_enabled) return [];
-    const interests = new Map((await this.interests()).map((row) => [row.interestKey, row.score]));
+    let interestRows = await this.interests();
+    if (!interestRows.some((row) => row.score > 0) &&
+        (await this.rows('event_interactions', { user_id: eq(this.userId), action: 'eq.saved' })).length) {
+      await this.recomputeInterests();
+      interestRows = await this.interests();
+    }
+    const interests = new Map(interestRows.map((row) => [row.interestKey, row.score]));
     const links = await this.rows('user_events', { user_id: eq(this.userId) });
     const excluded = new Set(links.filter((row) => ['saved', 'planned', 'completed', 'dismissed', 'unsaved'].includes(row.status))
       .map((row) => row.event_id));

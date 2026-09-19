@@ -1,10 +1,13 @@
 import http from 'node:http';
 import './load-env.js';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { cleanExtraction, validateSavedEvent } from './domain.js';
+import { categories, cleanExtraction, validateSavedEvent } from './domain.js';
 import { documentInput } from './document.js';
 import { store } from './store.js';
 import { CloudStore, importCloudCatalog } from './cloud-store.js';
+import { discoverEvents, discoveryTopic } from './discovery.js';
+import { categoryGroup } from './categories.js';
+import { discoverSemaExhibitions } from './sema.js';
 
 const port = Number(process.env.PORT || 8787);
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
@@ -16,6 +19,30 @@ if (process.env.CUE_CLOUD_REQUIRED === '1' &&
   throw new Error('Cue cloud deployment requires OpenAI and Supabase server environment variables.');
 }
 const rate = new Map();
+const discoveryJobs = new Map();
+
+async function discoverFor(data, userId) {
+  const interests = new Map((await data.interests(userId)).map((row) => [row.interestKey, row.score]));
+  const topic = discoveryTopic(interests);
+  if (!topic) return false;
+  const previous = discoveryJobs.get(topic);
+  if (previous && Date.now() - previous.startedAt < 12 * 60 * 60 * 1000) {
+    await previous.promise;
+    return false;
+  }
+  const promise = (async () => {
+    const candidates = categoryGroup(topic) === '전시'
+      ? await discoverSemaExhibitions() : await discoverEvents(topic);
+    if (!candidates.length) return;
+    const catalog = await data.rows('events', { source_type: 'eq.catalog' });
+    const existing = new Set(catalog.filter((event) => Date.parse(event.end_at) > Date.now())
+      .map((event) => event.source_url).filter(Boolean));
+    await importCloudCatalog(candidates.filter((event) => !existing.has(event.sourceUrl)));
+  })();
+  discoveryJobs.set(topic, { startedAt: Date.now(), promise });
+  await promise;
+  return true;
+}
 
 function send(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -103,7 +130,7 @@ const extractionSchema = {
   type: 'object', additionalProperties: false,
   properties: {
     is_event: { type: 'boolean' }, title: { type: 'string' },
-    category: { type: 'string', enum: ['음악', '전시', '공연', '스포츠', '음식', '교육', '커뮤니티', '기타'] },
+    category: { type: 'string', enum: categories },
     tags: { type: 'array', items: { type: 'string' } },
     description: { type: 'string' },
     sessions: { type: 'array', items: sessionSchema },
@@ -214,7 +241,18 @@ export const server = http.createServer(async (req, res) => {
       store.updateProfile(user.id, profile);
       return send(res, 200, { profile });
     }
-    if (req.method === 'GET' && route === '/v1/recommendations') return send(res, 200, { events: await data.recommendations(user.id) });
+    if (req.method === 'GET' && route === '/v1/recommendations') {
+      let events = await data.recommendations(user.id);
+      if (!events.length && user.supabase) {
+        try {
+          await discoverFor(data, user.id);
+          events = await data.recommendations(user.id);
+        } catch (error) {
+          console.error('Event discovery:', error instanceof Error ? error.message : error);
+        }
+      }
+      return send(res, 200, { events });
+    }
     if (req.method === 'GET' && route === '/v1/memories') return send(res, 200, { memories: await data.memories(user.id) });
     if (req.method === 'GET' && route === '/v1/goals') return send(res, 200, { goals: await data.goals(user.id) });
     if (req.method === 'POST' && route === '/v1/goals') {

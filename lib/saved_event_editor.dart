@@ -1,6 +1,8 @@
 import 'package:device_calendar/device_calendar.dart' as calendar;
 import 'package:flutter/material.dart';
 
+import 'cue_categories.dart';
+
 class SavedEventDraft {
   const SavedEventDraft({
     required this.title,
@@ -31,7 +33,7 @@ class SavedEventEditor extends StatefulWidget {
 }
 
 class _SavedEventEditorState extends State<SavedEventEditor> {
-  static const categories = ['음악', '전시', '공연', '스포츠', '음식', '교육', '커뮤니티', '기타'];
+  static const categories = cueCategories;
   late final TextEditingController title;
   late final TextEditingController venue;
   late String category;

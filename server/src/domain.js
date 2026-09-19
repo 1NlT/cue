@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { categories } from './categories.js';
 
-export const categories = ['음악', '전시', '공연', '스포츠', '음식', '교육', '커뮤니티', '기타'];
+export { categories } from './categories.js';
 const hasTimezone = (value) => /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/.test(value);
 const invalid = (message) => Object.assign(new Error(message), { status: 400 });
 

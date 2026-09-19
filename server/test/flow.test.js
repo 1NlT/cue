@@ -106,7 +106,7 @@ test('analysis stops after rejection and approved interests drive recommendation
     const exhibitionId = exhibitionRecommendations.body.events[0].id;
     assert.equal((await request(route, token, null, 'DELETE')).status, 200);
     assert.equal((await request('/v1/me', token, null, 'GET')).body.saved.length, 0);
-    assert.equal((await request('/v1/recommendations', token, null, 'GET')).body.events.length, 0);
+    assert.equal((await request('/v1/recommendations', token, null, 'GET')).body.events.length, 1);
     assert.equal((await request('/v1/interactions', token, { eventId: exhibitionId, action: 'interested' })).status, 201);
     assert.equal((await request('/v1/recommendations', token, null, 'GET')).body.events.length, 1);
     const goal = await request('/v1/goals', token, { eventId: exhibitionId });
