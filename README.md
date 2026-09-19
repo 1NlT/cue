@@ -6,7 +6,7 @@
 
 - `lib/`: Flutter 앱. 카메라/사진첩/문서 선택, 후보 선택과 직접 수정, 캘린더 저장과 저장된 일정의 수정·취소, 개인화 피드백, 라이트/다크 테마와 일정 기본값 설정.
 - `server/`: Node.js 22.13+ API. OpenAI 호출, 익명 사용자 식별, 문서 텍스트 추출, 사용자별 SQLite 저장소와 개인화 서비스.
-- `supabase/migrations/`: 향후 Supabase PostgreSQL에 적용할 테이블·RLS·인덱스·프로필 생성 트리거. 현재 배포에는 Supabase 프로젝트가 없어서 원격 DB를 사용하지 않습니다.
+- `supabase/migrations/`: Supabase PostgreSQL 테이블·RLS·인덱스·프로필 생성 트리거.
 - OpenAI 키는 **서버 프로세스의 `OPENAI_API_KEY` 환경변수에만** 둡니다. 앱에는 서버 URL만 전달합니다. `server/setup_key.command`에서 화면에 표시되지 않는 입력으로 키를 받아 권한 `600`의 `server/.env`에 보관하고, 서버 시작 시 환경변수로 읽습니다. 이 파일은 Git에서 제외됩니다.
 
 ## 로컬 실행
@@ -42,9 +42,9 @@ flutter run --release -d 00008140-000E65980C10801C --dart-define=CUE_API_URL=htt
 - 추천은 실제 등록된 미래 행사 중 관심 분야에 맞고 신청 기한이 지나지 않았으며 Cue에 저장한 일정과 겹치지 않는 후보를 고릅니다. 기기 캘린더 전체나 위치 정보는 현재 읽지 않으므로 그 조건을 추정하지 않습니다. 추천 이유와 사용자 반응을 기록합니다.
 - 설정에서 개인화를 끄면 새 관심 행동 기록과 추천을 중단하고 계산된 관심도·Memory를 비웁니다. `DELETE /v1/account`는 서버의 사용자 데이터를 삭제합니다. 기기 캘린더 항목은 별도로 관리합니다.
 
-## Supabase 연결 준비
+## Supabase 연결
 
-현재는 Supabase 프로젝트가 없으므로 SQLite가 실제 저장소입니다. `supabase/migrations/20260919000000_cue_memory.sql`은 PostgreSQL 스키마와 사용자별 RLS를 준비합니다. 새 프로젝트에서 익명 로그인을 활성화하고 마이그레이션을 적용한 뒤 `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`를 서버 환경변수와 Flutter `--dart-define`에 지정하면 Supabase Auth 익명 사용자를 검증할 수 있습니다. 기존 설치별 토큰의 데이터는 인증된 새 사용자에게 한 번 연결됩니다. **PostgreSQL 저장소 전환은 아직 연결되지 않았으므로** 클라우드 다중 기기 동기화는 프로젝트 생성 후 다음 단계에서 완료해야 합니다. Flutter에는 공개용 URL·publishable key만 들어가며 service-role key와 OpenAI 키는 넣지 않습니다.
+`supabase/migrations/20260919000000_cue_memory.sql`을 프로젝트 SQL Editor에서 실행하고 익명 로그인을 활성화합니다. `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`를 서버 환경변수(또는 Git에서 제외된 `server/.env`)와 Flutter `--dart-define`에 지정하면 앱이 Supabase Auth 익명 사용자를 만들고 서버가 JWT를 검증합니다. `profiles` 행은 가입 트리거로 생성되며 앱의 설정 화면에 연결 상태와 사용자 ID를 표시합니다. 프로필 설정은 Supabase와 서버 저장소에 반영됩니다. 기존 설치별 토큰의 데이터는 인증된 새 사용자에게 한 번 연결됩니다. **행사·관심도·추천 등의 실제 저장소는 아직 서버 SQLite이므로** 다중 기기 동기화는 다음 단계에서 완료해야 합니다. Flutter에는 공개용 URL·publishable key만 들어가며 service-role key와 OpenAI 키는 넣지 않습니다.
 
 ## 추천 행사 등록
 

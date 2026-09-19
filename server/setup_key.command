@@ -12,7 +12,12 @@ if [ -z "$cue_secret" ]; then
   exit 1
 fi
 umask 077
-printf 'OPENAI_API_KEY=%s\n' "$cue_secret" > .env
+cue_env_tmp=$(mktemp .env.XXXXXX)
+if [ -f .env ]; then
+  awk '!/^OPENAI_API_KEY=/' .env > "$cue_env_tmp"
+fi
+printf 'OPENAI_API_KEY=%s\n' "$cue_secret" >> "$cue_env_tmp"
+mv "$cue_env_tmp" .env
 chmod 600 .env
 unset cue_secret
 printf '\n키를 server/.env에 저장했습니다. 이 파일은 Git에서 제외됩니다.\n'

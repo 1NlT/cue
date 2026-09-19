@@ -44,8 +44,35 @@ async function userFor(req) {
     const profile = await response.json();
     if (!/^[0-9a-f-]{36}$/i.test(profile.id || '')) return null;
     store.ensureSupabaseUser(profile.id);
-    return { id: profile.id, supabase: true };
+    return { id: profile.id, supabase: true, token };
   } catch { return null; }
+}
+
+async function cloudProfile(user, changes) {
+  const url = new URL(`${supabaseUrl.replace(/\/$/, '')}/rest/v1/profiles`);
+  url.searchParams.set('user_id', `eq.${user.id}`);
+  url.searchParams.set('select', '*');
+  const response = await fetch(url, {
+    method: changes ? 'PATCH' : 'GET',
+    headers: {
+      apikey: supabasePublishableKey,
+      authorization: `Bearer ${user.token}`,
+      ...(changes ? { 'content-type': 'application/json', prefer: 'return=representation' } : {}),
+    },
+    ...(changes ? { body: JSON.stringify(changes) } : {}),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw Object.assign(new Error('Supabase 사용자 정보를 읽지 못했습니다.'), { status: 502 });
+  const rows = await response.json();
+  if (!Array.isArray(rows) || rows.length !== 1) throw Object.assign(new Error('Supabase 사용자 프로필이 없습니다.'), { status: 502 });
+  const row = rows[0];
+  return {
+    userId: row.user_id, onboardingCompleted: row.onboarding_completed,
+    personalizationEnabled: row.personalization_enabled,
+    recommendationEnabled: row.recommendation_enabled,
+    locale: row.locale, timezone: row.timezone,
+    createdAt: row.created_at, updatedAt: row.updated_at,
+  };
 }
 
 function allowed(key, limit, windowMs) {
@@ -138,16 +165,42 @@ export const server = http.createServer(async (req, res) => {
       if (!user.supabase) return send(res, 403, { error: 'Supabase 인증이 필요합니다.' });
       const body = await readJson(req, 4096);
       const legacyToken = String(body.legacyToken || '');
-      if (!/^[a-f0-9]{64}$/.test(legacyToken) || !store.claimLegacyAccount(user.id,hash(legacyToken)))
+      const old = /^[a-f0-9]{64}$/.test(legacyToken) ? store.userByTokenHash(hash(legacyToken)) : null;
+      if (!old || old.id === user.id) return send(res, 404, { error: '이전 사용자 데이터를 찾지 못했습니다.' });
+      const oldProfile = store.profile(old.id);
+      await cloudProfile(user, {
+        onboarding_completed: oldProfile.onboardingCompleted,
+        personalization_enabled: oldProfile.personalizationEnabled,
+        recommendation_enabled: oldProfile.recommendationEnabled,
+        locale: oldProfile.locale, timezone: oldProfile.timezone,
+        updated_at: new Date().toISOString(),
+      });
+      if (!store.claimLegacyAccount(user.id, hash(legacyToken)))
         return send(res, 404, { error: '이전 사용자 데이터를 찾지 못했습니다.' });
       return send(res, 200, { claimed: true });
     }
-    if (req.method === 'GET' && route === '/v1/me') return send(res, 200, {
-      userId: user.id, profile: store.profile(user.id), saved: store.saved(user.id), interests: store.interests(user.id),
-    });
+    if (req.method === 'GET' && route === '/v1/me') {
+      const profile = user.supabase ? await cloudProfile(user) : store.profile(user.id);
+      return send(res, 200, {
+        userId: user.id, cloudConnected: !!user.supabase,
+        profile, saved: store.saved(user.id), interests: store.interests(user.id),
+      });
+    }
     if (req.method === 'PATCH' && route === '/v1/profile') {
       const body = await readJson(req, 4096);
-      return send(res, 200, { profile: store.updateProfile(user.id, body) });
+      if (!user.supabase) return send(res, 200, { profile: store.updateProfile(user.id, body) });
+      const previous = await cloudProfile(user);
+      const changes = {
+        onboarding_completed: typeof body.onboardingCompleted === 'boolean' ? body.onboardingCompleted : previous.onboardingCompleted,
+        personalization_enabled: typeof body.personalizationEnabled === 'boolean' ? body.personalizationEnabled : previous.personalizationEnabled,
+        recommendation_enabled: typeof body.recommendationEnabled === 'boolean' ? body.recommendationEnabled : previous.recommendationEnabled,
+        locale: typeof body.locale === 'string' && body.locale.length <= 16 ? body.locale : previous.locale,
+        timezone: typeof body.timezone === 'string' && body.timezone.length <= 64 ? body.timezone : previous.timezone,
+        updated_at: new Date().toISOString(),
+      };
+      const profile = await cloudProfile(user, changes);
+      store.updateProfile(user.id, profile);
+      return send(res, 200, { profile });
     }
     if (req.method === 'GET' && route === '/v1/recommendations') return send(res, 200, { events: store.recommendations(user.id) });
     if (req.method === 'GET' && route === '/v1/memories') return send(res, 200, { memories: store.memories(user.id) });

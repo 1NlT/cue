@@ -135,6 +135,8 @@ class _CueHomeState extends State<CueHome> {
   bool saving = false;
   bool personalizationEnabled = true;
   bool recommendationEnabled = true;
+  String? userId;
+  bool cloudConnected = false;
   String? busyEventId;
   String? statusMessage;
   String? apiError;
@@ -198,6 +200,8 @@ class _CueHomeState extends State<CueHome> {
       if (!mounted) return;
       setState(() {
         final profile = me['profile'] as Map<String, dynamic>? ?? {};
+        userId = me['userId'] as String?;
+        cloudConnected = me['cloudConnected'] as bool? ?? false;
         personalizationEnabled =
             profile['personalizationEnabled'] as bool? ?? true;
         recommendationEnabled =
@@ -1335,6 +1339,21 @@ class _CueHomeState extends State<CueHome> {
     children: [
       _pageTitle('설정', '일정을 담는 방식을 정해요'),
       SizedBox(height: 20),
+      if (userId != null) ...[
+        _card(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _eyebrow('내 계정'),
+              SizedBox(height: 10),
+              Text(cloudConnected ? 'Supabase에 연결됨' : '이 기기에 저장 중'),
+              SizedBox(height: 4),
+              SelectableText('사용자 ID  $userId'),
+            ],
+          ),
+        ),
+        SizedBox(height: 14),
+      ],
       _card(
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
