@@ -40,6 +40,7 @@ export function interestSignals(interactions, currentTime = Date.now()) {
 export function rankRecommendations({ catalog, saved, interests, excluded, currentTime = Date.now() }) {
   // Old profile keys can still be read until the store recomputes them.
   const positiveDomains = [...interests.entries()].filter(([key, score]) => key.startsWith('domain:') && score > 0);
+  const specificInterests = positiveDomains.filter(([key]) => !['domain:문화', 'domain:기타'].includes(key));
   return catalog
     .filter((event) => Date.parse(event.endsAt) > currentTime &&
       (!event.applicationDeadline || Date.parse(event.applicationDeadline) > currentTime) &&
@@ -52,7 +53,8 @@ export function rankRecommendations({ catalog, saved, interests, excluded, curre
       const domainScore = matchedDomains.reduce((sum, domain) => sum + interests.get(`domain:${domain}`), 0);
       const tagScore = (event.tags || []).reduce((sum, tag) => sum + Math.max(0, interests.get(`tag:${tagKey(tag)}`) || 0), 0);
       // A matching format alone must never recommend an unrelated topic.
-      const eligible = matchedDomains.length > 0 && positiveDomains.length > 0;
+      const eligible = matchedDomains.length > 0 && positiveDomains.length > 0 &&
+        (!specificInterests.length || matchedDomains.some((domain) => domain !== '문화'));
       const formatScore = Math.max(0, interests.get(`format:${classification.format}`) || 0);
       const score = eligible ? domainScore * 4 + tagScore * 1.5 + formatScore * 0.2 : 0;
       const reason = matchedDomains.length ? `${matchedDomains.slice(0, 2).join('·')} 주제에 보인 관심을 바탕으로 추천해요.` : '';
