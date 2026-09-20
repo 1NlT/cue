@@ -259,7 +259,7 @@ export const store = {
   },
   interests(userId) { return db.prepare('SELECT interest_key AS interestKey,score,confidence,evidence_count AS evidenceCount,last_updated_at AS lastUpdatedAt FROM interest_profiles WHERE user_id=? ORDER BY score DESC').all(userId); },
   memories(userId) { return db.prepare('SELECT id,memory_type AS memoryType,content,confidence,evidence_count AS evidenceCount,expires_at AS expiresAt FROM agent_memories WHERE user_id=? AND (expires_at IS NULL OR expires_at>?)').all(userId,now()); },
-  recommendations(userId) {
+  recommendations(userId, { seed = null, seen = new Set() } = {}) {
     const profile = this.profile(userId);
     if (!profile?.personalizationEnabled || !profile.recommendationEnabled) return [];
     if (!this.interests(userId).some((item) => item.interestKey.startsWith('domain:')) &&
@@ -267,7 +267,7 @@ export const store = {
       this.recomputeInterests(userId);
     const interests = new Map(this.interests(userId).map((item) => [item.interestKey,item.score]));
     const excluded = new Set(db.prepare("SELECT event_id FROM user_events WHERE user_id=? AND status IN ('saved','planned','completed','dismissed','unsaved')").all(userId).map((item) => item.event_id));
-    const results = rankRecommendations({ catalog: this.catalog(), saved: this.saved(userId), interests, excluded, explore: exploreEnabled() });
+    const results = rankRecommendations({ catalog: this.catalog(), saved: this.saved(userId), interests, excluded, explore: exploreEnabled(), seed, seen });
     for (const event of results) {
       db.prepare(`INSERT INTO recommendations(id,user_id,event_id,recommendation_score,reason,created_at) VALUES(?,?,?,?,?,?)
         ON CONFLICT(user_id,event_id) DO UPDATE SET recommendation_score=excluded.recommendation_score,reason=excluded.reason`)

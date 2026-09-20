@@ -14,6 +14,24 @@ const samples = [
   { title: '서울 재즈 페스티벌 나이트', category: '재즈', format: '공연', domains: ['음악'], tags: ['재즈', '콘서트'], venue: '서울 송파구 올림픽공원 88잔디마당', day: 12, hour: 17, hours: 4, description: '국내외 재즈 아티스트가 참여하는 야외 음악 페스티벌' },
   { title: '데이터 과학·연구 트렌드 컨퍼런스', category: '강연', format: '세미나', domains: ['과학', 'AI'], tags: ['과학', '연구', '머신러닝'], venue: '서울 동대문구 KAIST 서울캠퍼스', day: 11, hour: 10, hours: 6, description: '데이터 과학과 머신러닝 연구 성과를 발표하는 컨퍼런스' },
   { title: '공공데이터 정책 포럼', category: '강연', format: '토론회', domains: ['정책', '소프트웨어'], tags: ['정책', '공공데이터'], venue: '서울 중구 서울시청 다목적홀', day: 13, hour: 14, hours: 3, description: '공공데이터 개방 정책과 활용 서비스 사례를 논의하는 포럼' },
+  { title: 'LLM 에이전트 개발 워크숍', category: '워크숍', format: '체험', domains: ['AI', '소프트웨어'], tags: ['인공지능', '에이전트', '개발자'], venue: '서울 강남구 구글스타트업캠퍼스', day: 15, hour: 14, hours: 4, description: 'LLM 기반 에이전트를 직접 만들어 보는 실습 워크숍' },
+  { title: '교육 데이터와 AI 튜터 심포지엄', category: '강연', format: '토론회', domains: ['교육', 'AI'], tags: ['미래교육', '에듀테크'], venue: '서울 서대문구 연세대학교 백주년기념관', day: 16, hour: 13, hours: 4, description: '에듀테크 기업과 교사가 AI 튜터 도입 사례를 공유하는 심포지엄' },
+  { title: '서울 로보틱스 챌린지', category: '박람회', format: '공모전', domains: ['로봇', '과학'], tags: ['로봇', '경진대회'], venue: '서울 성동구 서울숲 복합문화공간', day: 17, hour: 10, hours: 7, description: '학생과 일반인 팀이 자율주행 로봇 과제를 겨루는 경진대회' },
+  { title: '오픈소스 컨트리뷰톤 밋업', category: '모임', format: '세미나', domains: ['소프트웨어'], tags: ['오픈소스', '개발자', '코딩'], venue: '서울 마포구 마포구청 창업센터', day: 18, hour: 19, hours: 2, description: '오픈소스 프로젝트 기여 방법과 후기를 나누는 밋업' },
+  { title: '창업가를 위한 IR 피칭 데이', category: '강연', format: '세미나', domains: ['창업'], tags: ['창업', '피칭', '스타트업'], venue: '서울 영등포구 서울핀테크랩', day: 19, hour: 15, hours: 3, description: '초기 스타트업이 투자자 앞에서 발표하고 피드백을 받는 행사' },
+  { title: '기후위기 대응 과학 강연 시리즈', category: '강연', format: '강연', domains: ['과학', '정책'], tags: ['과학', '기후'], venue: '서울 종로구 국립과천과학관 서울분관', day: 20, hour: 14, hours: 2, description: '기후 과학자와 함께하는 시민 대상 과학 강연' },
+  { title: '개인정보·AI 규제 정책 세미나', category: '강연', format: '세미나', domains: ['정책', 'AI'], tags: ['정책', '규제', '인공지능'], venue: '서울 중구 프레스센터 20층', day: 21, hour: 14, hours: 3, description: 'AI 기본법과 개인정보 규제 흐름을 짚어보는 정책 세미나' },
+  { title: '사진으로 보는 서울 특별전', category: '사진 전시', format: '전시', domains: ['미술', '문화'], tags: ['사진', '전시'], venue: '서울 용산구 한미사진미술관', day: 22, hour: 14, hours: 2, description: '도시 풍경을 담은 사진 작품 특별전. 추천 방문 시간 14:00~16:00' },
+  { title: '현대 조각과 공간 디자인전', category: '미술 전시', format: '전시', domains: ['미술', '디자인'], tags: ['조각', '디자인', '현대미술'], venue: '서울 종로구 아라리오뮤지엄', day: 23, hour: 14, hours: 2, description: '조각과 공간 설치 작품을 함께 보는 기획전. 추천 방문 시간 14:00~16:00' },
+  { title: 'UX 디자인 시스템 컨퍼런스', category: '강연', format: '세미나', domains: ['디자인', '소프트웨어'], tags: ['디자인', 'UX'], venue: '서울 강남구 삼성동 코엑스 그랜드볼룸', day: 24, hour: 10, hours: 6, description: '디자인 시스템 운영 사례를 공유하는 실무자 컨퍼런스' },
+  { title: '실내악 앙상블 살롱 콘서트', category: '클래식', format: '공연', domains: ['음악'], tags: ['클래식', '실내악'], venue: '서울 종로구 세종문화회관 체임버홀', day: 14, hour: 19, hours: 2, description: '가까운 거리에서 듣는 실내악 앙상블 공연' },
+  { title: '인디 밴드 라이브 나이트', category: '콘서트', format: '공연', domains: ['음악'], tags: ['인디', '콘서트'], venue: '서울 마포구 홍대 롤링홀', day: 6, hour: 19, hours: 3, description: '신진 인디 밴드 다섯 팀이 함께하는 라이브 공연' },
+  { title: '국립극장 창작 연극 <가을의 문>', category: '연극', format: '공연', domains: ['문화'], tags: ['연극', '공연'], venue: '서울 중구 국립극장 달오름극장', day: 25, hour: 19, hours: 2, description: '창작 희곡을 무대에 올린 신작 연극' },
+  { title: '대학 로봇 동아리 연합 발표회', category: '워크숍', format: '세미나', domains: ['로봇', '교육'], tags: ['로봇', '학생'], venue: '서울 관악구 서울대학교 신공학관', day: 26, hour: 15, hours: 3, description: '대학 로봇 동아리들이 프로젝트를 발표하고 교류하는 자리' },
+  { title: '데이터 시각화 실전 워크숍', category: '워크숍', format: '체험', domains: ['소프트웨어', '디자인', '과학'], tags: ['데이터', '시각화'], venue: '서울 성동구 헤이그라운드', day: 27, hour: 14, hours: 3, description: '실제 공공데이터로 시각화를 만들어 보는 실습' },
+  { title: '청년 창업 정책 설명회', category: '강연', format: '강연', domains: ['창업', '정책'], tags: ['정책', '창업', '지원사업'], venue: '서울 중구 서울시청 시민청', day: 28, hour: 14, hours: 2, description: '청년 창업 지원사업과 신청 방법을 안내하는 설명회' },
+  { title: 'K-사이언스 페스티벌', category: '박람회', format: '체험', domains: ['과학', '교육'], tags: ['과학', '체험'], venue: '서울 강서구 마곡 서울식물원', day: 29, hour: 11, hours: 5, description: '가족과 함께 즐기는 과학 체험 페스티벌' },
+  { title: 'AI 윤리와 안전 토론회', category: '강연', format: '토론회', domains: ['AI', '정책', '교육'], tags: ['인공지능', '윤리'], venue: '서울 서초구 국회도서관 대강당', day: 30, hour: 14, hours: 3, description: 'AI 윤리와 안전 기준을 둘러싼 전문가 토론회' },
 ];
 
 const kst = (base, day, hour) => {
@@ -30,4 +48,5 @@ export function demoEvents(currentTime = Date.now()) {
   }));
 }
 
+export const demoEventCount = samples.length;
 export const isDemoEvent = (event) => (event.tags || []).includes('시연용');

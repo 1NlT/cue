@@ -42,3 +42,25 @@ test('demo mode seeds the catalog so a brand-new user gets recommendations', asy
     assert.deepEqual(again.map((event) => event.id), first.map((event) => event.id));
   } finally { server.close(); }
 });
+
+test('refresh seeds rotate recommendations, keep a seed stable and push seen events back', () => {
+  const currentTime = Date.parse('2026-09-20T00:00:00+09:00');
+  const catalog = demoEvents(currentTime).map((event, index) => ({ ...event, id: `00000000-0000-0000-0000-${String(index).padStart(12, '0')}` }));
+  const args = { catalog, saved: [], interests: new Map([['domain:AI', 4]]), excluded: new Set(), currentTime, explore: true };
+  const ids = (results) => results.map((event) => event.id);
+  const first = ids(rankRecommendations({ ...args, seed: 1 }));
+  assert.deepEqual(ids(rankRecommendations({ ...args, seed: 1 })), first);
+  const second = ids(rankRecommendations({ ...args, seed: 2 }));
+  assert.notDeepEqual(second, first);
+  // 이미 본 행사를 넘기면 새 행사가 더 많이 들어온다.
+  const third = ids(rankRecommendations({ ...args, seed: 3, seen: new Set(first) }));
+  assert.ok(third.filter((id) => !first.includes(id)).length >= third.filter((id) => !second.includes(id)).length - 2);
+  assert.ok(new Set(third).size === third.length);
+  // 시드가 없으면 예전처럼 항상 같은 순서다.
+  assert.deepEqual(ids(rankRecommendations(args)), ids(rankRecommendations(args)));
+  // 관심사가 없어도 여러 번 새로고침하면 서로 다른 행사가 나온다.
+  const cold = { ...args, interests: new Map() };
+  const seenAcross = new Set();
+  for (let seed = 1; seed <= 5; seed += 1) ids(rankRecommendations({ ...cold, seed })).forEach((id) => seenAcross.add(id));
+  assert.ok(seenAcross.size > 8);
+});

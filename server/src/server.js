@@ -9,7 +9,7 @@ import { discoverEvents, discoveryTopic, discoverySubject, findNextEdition } fro
 import { categoryGroup } from './categories.js';
 import { discoverSemaExhibitions } from './sema.js';
 import { formats, domains } from './classification.js';
-import { demoEvents, isDemoEvent } from './demo-catalog.js';
+import { demoEvents, demoEventCount, isDemoEvent } from './demo-catalog.js';
 
 const port = Number(process.env.PORT || 8787);
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
@@ -22,12 +22,16 @@ if (process.env.CUE_CLOUD_REQUIRED === '1' &&
 }
 const rate = new Map();
 const discoveryJobs = new Map();
+const fallbackTopics = ['기술', '음악', '공연', '강연', '워크숍', '스포츠'];
 
 async function discoverFor(data, userId) {
   const interests = new Map((await data.interests(userId)).map((row) => [row.interestKey, row.score]));
-  const topic = discoveryTopic(interests);
+  // 관심사가 없으면 여러 주제를 돌아가며 찾아 새로고침할 때마다 다른 행사가 들어오게 한다.
+  const fresh = (candidate) => { const job = discoveryJobs.get(`${candidate}:${candidate}`);
+    return job && Date.now() - job.startedAt < job.retryAfter; };
+  const topic = discoveryTopic(interests) || fallbackTopics.find((candidate) => !fresh(candidate)) || null;
   if (!topic) return false;
-  const subject = discoverySubject(interests);
+  const subject = discoverySubject(interests) || topic;
   const jobKey = `${topic}:${subject}`;
   const previous = discoveryJobs.get(jobKey);
   if (previous && Date.now() - previous.startedAt < previous.retryAfter) {
@@ -58,7 +62,7 @@ async function seedDemoCatalog(data) {
   const upcoming = (data === store ? store.catalog()
     : (await data.rows('events', { source_type: 'eq.catalog', end_at: `gt.${new Date().toISOString()}` })).map((row) => ({ ...row, endsAt: row.end_at })))
     .filter((event) => Date.parse(event.endsAt) > Date.now() && isDemoEvent(event));
-  if (upcoming.length >= 8) return false;
+  if (upcoming.length >= demoEventCount) return false;
   const known = new Set(upcoming.map((event) => event.title));
   const events = demoEvents().filter((event) => !known.has(event.title));
   if (data !== store) await importCloudCatalog(events);
@@ -281,25 +285,31 @@ export const server = http.createServer(async (req, res) => {
       return send(res, 200, { profile });
     }
     if (req.method === 'GET' && route === '/v1/recommendations') {
+      // seed가 있으면 새로고침 요청이다. seen(이미 보여준 행사)을 뒤로 미루고 순서를 섞는다.
+      const query = new URL(req.url, 'http://localhost').searchParams;
+      const rawSeed = query.get('seed');
+      const seed = /^\d{1,10}$/.test(rawSeed || '') ? Number(rawSeed) : null;
+      const seen = new Set(String(query.get('seen') || '').split(',').filter((id) => /^[0-9a-f-]{36}$/i.test(id)).slice(0, 60));
+      const options = { seed, seen };
       const demo = process.env.CUE_DEMO_MODE === '1';
       if (demo) {
         try { await ensureDemoCatalog(data); } catch (error) {
           console.error('Demo catalog:', error instanceof Error ? error.message : error);
         }
       }
-      let events = await data.recommendations(user.id);
-      if (demo) {
-        // 실시간 웹 검색은 느리고 불안정하므로 응답을 막지 않고 백그라운드에서 카탈로그만 보강한다.
-        if (user.supabase && Date.now() - (backgroundDiscoveryAt.get(user.id) || 0) > 15 * 60 * 1000) {
-          backgroundDiscoveryAt.set(user.id, Date.now());
-          discoverFor(data, user.id).catch(() => {});
-        }
-        return send(res, 200, { events });
+      let events = await data.recommendations(user.id, options);
+      // 명시적으로 새로고침하면 응답을 막지 않고 새 행사를 찾아 카탈로그에 넣는다. 다음 새로고침에 섞여 나온다.
+      const refreshCooldown = seed == null ? 15 * 60 * 1000 : 3 * 60 * 1000;
+      if ((demo || seed != null) && user.supabase &&
+          Date.now() - (backgroundDiscoveryAt.get(user.id) || 0) > refreshCooldown) {
+        backgroundDiscoveryAt.set(user.id, Date.now());
+        discoverFor(data, user.id).catch(() => {});
       }
+      if (demo) return send(res, 200, { events });
       if (!events.length && user.supabase) {
         try {
           await discoverFor(data, user.id);
-          events = await data.recommendations(user.id);
+          events = await data.recommendations(user.id, options);
         } catch (error) {
           console.error('Event discovery:', error instanceof Error ? error.message : error);
         }

@@ -49,9 +49,20 @@ export function interestSignals(interactions, currentTime = Date.now()) {
 
 // 시연 모드: 관심사가 없거나 맞는 행사가 적어도 다가오는 행사를 탐색용으로 채워 보여준다.
 const exploreMinimum = 6;
+const exploreSize = 8;
 export const exploreEnabled = () => process.env.CUE_DEMO_MODE === '1';
 
-export function rankRecommendations({ catalog, saved, interests, excluded, currentTime = Date.now(), explore = false }) {
+// 같은 seed와 행사 id면 항상 같은 0~1 값을 돌려주는 가벼운 해시. 새로고침마다 seed를 바꿔 순서를 섞는다.
+function seededRandom(seed, id) {
+  let h = 2166136261 ^ Number(seed);
+  for (const ch of String(id)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  h ^= h >>> 15; h = Math.imul(h, 2246822507); h ^= h >>> 13;
+  return ((h >>> 0) % 100000) / 100000;
+}
+const varietyJitter = 0.4;
+const seenPenalty = 0.4;
+
+export function rankRecommendations({ catalog, saved, interests, excluded, currentTime = Date.now(), explore = false, seed = null, seen = new Set() }) {
   // Old profile keys can still be read until the store recomputes them.
   const positiveDomains = [...interests.entries()].filter(([key, score]) => key.startsWith('domain:') && score > 0);
   const specificInterests = positiveDomains.filter(([key]) => !['domain:문화', 'domain:기타'].includes(key));
@@ -79,11 +90,17 @@ export function rankRecommendations({ catalog, saved, interests, excluded, curre
       return { ...event, ...classification, score, reason };
     })
     .sort((a, b) => b.score - a.score || Date.parse(a.startsAt) - Date.parse(b.startsAt));
-  const matched = ranked.filter((event) => event.score > 0);
+  // seed가 있으면 점수를 조금 흔들고 방금 본 행사는 뒤로 미뤄 새로고침마다 다른 행사가 섞여 나오게 한다.
+  const varied = (event, base) => seed == null ? base
+    : base * (1 + varietyJitter * (seededRandom(seed, event.id) * 2 - 1)) * (seen.has(event.id) ? seenPenalty : 1);
+  const byVariety = (list) => seed == null ? list
+    : [...list].sort((a, b) => varied(b, b.score) - varied(a, a.score));
+  const matched = byVariety(ranked.filter((event) => event.score > 0));
   if (!explore || matched.length >= exploreMinimum) return matched.slice(0, 12);
   const reason = positiveDomains.length ? '새로운 관심사를 발견할 수 있는 행사예요.' : '지금 인기 있는 행사예요. 저장하면 취향에 맞춰 추천해요.';
-  const filler = ranked.filter((event) => event.score <= 0).map((event) => ({ ...event, score: 0.01, reason }));
-  return [...matched, ...filler].slice(0, Math.max(exploreMinimum, matched.length));
+  const filler = byVariety(ranked.filter((event) => event.score <= 0).map((event) => ({ ...event, score: 1, reason })))
+    .map((event) => ({ ...event, score: 0.01 }));
+  return [...matched, ...filler].slice(0, Math.max(exploreSize, matched.length));
 }
 
 export function memoryFromSignal(key, value) {

@@ -145,6 +145,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
   String? pastEventEndedAt;
   Map<String, dynamic>? pastSuggestion;
   Set<String> interestedIds = {};
+  int? recommendationSeed;
   DateTime? startsAt;
   DateTime? endsAt;
   int reminderMinutes = 60;
@@ -246,8 +247,17 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
     }());
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh({bool shuffle = false}) async {
     if (mounted) setState(() => recommendationLoading = true);
+    // 새로고침(shuffle)이면 새 seed와 방금 본 행사를 보내 서버가 다른 조합을 고르게 한다.
+    var recommendationRoute = '/v1/recommendations';
+    if (shuffle) {
+      recommendationSeed = DateTime.now().millisecondsSinceEpoch % 1000000000;
+      final seen = recommended.map((event) => event['id']).whereType<String>().take(40).join(',');
+      recommendationRoute += '?seed=$recommendationSeed&seen=$seen';
+    } else if (recommendationSeed != null) {
+      recommendationRoute += '?seed=$recommendationSeed';
+    }
     try {
       await api.init();
       final prefs = await SharedPreferences.getInstance();
@@ -265,7 +275,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
       }
       final responses = await Future.wait([
         api.get('/v1/me'),
-        api.get('/v1/recommendations'),
+        api.get(recommendationRoute),
       ]);
       final me = responses[0];
       final recs = responses[1];
@@ -435,6 +445,9 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
       // 시간·장소가 여러 개면 별도 선택창으로 바로 고르게 한다.
       if (event.sessions.length > 1) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _chooseSession());
+      } else if (event.sessions.isEmpty) {
+        // 날짜나 장소가 분명하지 않으면 입력 후 바로 직접 고르는 시트를 띄운다.
+        WidgetsBinding.instance.addPostFrameCallback((_) => _editSchedule(ambiguous: true));
       }
     } catch (error) {
       if (mounted) {
@@ -459,32 +472,145 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
     venueController.text = value.venue;
   }
 
-  Future<void> _chooseDateTime() async {
+  String _dateOnly(DateTime value) =>
+      '${value.year}.${value.month.toString().padLeft(2, '0')}.${value.day.toString().padLeft(2, '0')}';
+  String _timeOnly(DateTime value) =>
+      '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+  // 날짜가 불분명하거나 직접 고르고 싶을 때 쓰는 일정 입력 시트. 날짜·시작/종료 시간·장소를 한 곳에서 정한다.
+  Future<void> _editSchedule({bool ambiguous = false}) async {
+    if (!mounted) return;
     final now = DateTime.now();
-    final date = await showDatePicker(
+    var start = startsAt ?? DateTime(now.year, now.month, now.day + 1, 14);
+    var end = endsAt ?? start.add(Duration(minutes: defaultDurationMinutes));
+    final venueField = TextEditingController(text: venueController.text);
+    String? problem;
+    final result = await showModalBottomSheet<(DateTime, DateTime, String)>(
       context: context,
-      initialDate: startsAt ?? now,
-      firstDate: DateTime(now.year - 1),
-      lastDate: DateTime(now.year + 5),
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheet) {
+          Future<void> pickDate() async {
+            final picked = await showDatePicker(
+              context: context,
+              initialDate: start.isBefore(now) ? now : start,
+              firstDate: DateTime(now.year - 1),
+              lastDate: DateTime(now.year + 5),
+            );
+            if (picked == null) return;
+            setSheet(() {
+              start = DateTime(picked.year, picked.month, picked.day, start.hour, start.minute);
+              end = DateTime(picked.year, picked.month, picked.day, end.hour, end.minute);
+              problem = null;
+            });
+          }
+
+          Future<void> pickTime(bool beginning) async {
+            final picked = await showTimePicker(
+              context: context,
+              initialTime: TimeOfDay.fromDateTime(beginning ? start : end),
+            );
+            if (picked == null) return;
+            setSheet(() {
+              if (beginning) {
+                final length = end.difference(start);
+                start = DateTime(start.year, start.month, start.day, picked.hour, picked.minute);
+                end = start.add(length.isNegative || length == Duration.zero
+                    ? Duration(minutes: defaultDurationMinutes)
+                    : length);
+              } else {
+                end = DateTime(start.year, start.month, start.day, picked.hour, picked.minute);
+              }
+              problem = null;
+            });
+          }
+
+          Widget row(IconData icon, String label, String value, VoidCallback onTap) =>
+              InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(15),
+                child: Container(
+                  padding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  margin: EdgeInsets.only(bottom: 9),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: borderColor),
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Row(children: [
+                    Icon(icon, color: accent, size: 22),
+                    SizedBox(width: 12),
+                    Expanded(child: Text(label, style: TextStyle(color: muted))),
+                    Text(value, style: TextStyle(color: ink, fontWeight: FontWeight.w800, fontSize: 16)),
+                    SizedBox(width: 4),
+                    Icon(Icons.chevron_right, color: muted),
+                  ]),
+                ),
+              );
+
+          return Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: SafeArea(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(20, 2, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      ambiguous ? '날짜와 시간을 정해 주세요' : '일정을 직접 입력해요',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: ink),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      ambiguous
+                          ? '안내문에서 날짜나 시간, 장소가 분명하지 않았어요. 아래에서 직접 골라 주세요.'
+                          : '캘린더에 저장할 날짜, 시간, 장소를 골라 주세요.',
+                      style: TextStyle(color: muted, height: 1.5),
+                    ),
+                    SizedBox(height: 16),
+                    row(Icons.event_outlined, '날짜', _dateOnly(start), pickDate),
+                    row(Icons.schedule, '시작', _timeOnly(start), () => pickTime(true)),
+                    row(Icons.timelapse_outlined, '종료', _timeOnly(end), () => pickTime(false)),
+                    SizedBox(height: 3),
+                    TextField(
+                      controller: venueField,
+                      decoration: InputDecoration(
+                        labelText: '장소',
+                        prefixIcon: Icon(Icons.place_outlined),
+                      ),
+                    ),
+                    if (problem != null) ...[
+                      SizedBox(height: 8),
+                      Text(problem!, style: TextStyle(color: Color(0xFFE5484D), fontSize: 13)),
+                    ],
+                    SizedBox(height: 16),
+                    _button('이 일정으로 정하기', Icons.check, () {
+                      if (venueField.text.trim().isEmpty) {
+                        setSheet(() => problem = '장소를 입력해 주세요.');
+                      } else if (!end.isAfter(start)) {
+                        setSheet(() => problem = '종료 시간이 시작 시간보다 늦어야 해요.');
+                      } else {
+                        Navigator.pop(sheetContext, (start, end, venueField.text.trim()));
+                      }
+                    }),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
-    if (!mounted || date == null) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: startsAt == null
-          ? TimeOfDay.now()
-          : TimeOfDay.fromDateTime(startsAt!),
-    );
-    if (!mounted || time == null) return;
-    setState(() {
-      startsAt = DateTime(
-        date.year,
-        date.month,
-        date.day,
-        time.hour,
-        time.minute,
-      );
-      endsAt = startsAt!.add(Duration(minutes: defaultDurationMinutes));
-    });
+    venueField.dispose();
+    if (result != null && mounted) {
+      setState(() {
+        startsAt = result.$1;
+        endsAt = result.$2;
+        venueController.text = result.$3;
+        selectedSession = null;
+      });
+    }
   }
 
   Future<void> _chooseCalendar() async {
@@ -541,7 +667,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
 
   Future<void> _save() async {
     if (candidate == null) return;
-    if (candidate!.sessions.length > 1 && selectedSession == null) {
+    if (candidate!.sessions.length > 1 && selectedSession == null && startsAt == null) {
       _message('시간과 장소 중 하나를 선택해 주세요.');
       unawaited(_chooseSession());
       return;
@@ -879,7 +1005,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
                 children: [
                   _scroll(_home()),
                   _scroll(_saved(), onRefresh: _refresh),
-                  _scroll(_discover(), onRefresh: _refresh),
+                  _scroll(_discover(), onRefresh: () => _refresh(shuffle: true)),
                   _scroll(_settings()),
                 ],
               ),
@@ -1486,7 +1612,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
                   _sessionChoice(i, event.sessions[i]),
               ] else if (event.sessions.isEmpty) ...[
                 Text(
-                  '시간 또는 장소가 불명확해요. 직접 입력해 주세요.',
+                  '시간 또는 장소가 불명확해요. 아래에서 직접 골라 주세요.',
                   style: TextStyle(color: muted),
                 ),
                 SizedBox(height: 12),
@@ -1500,7 +1626,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
               ),
               SizedBox(height: 12),
               OutlinedButton.icon(
-                onPressed: _chooseDateTime,
+                onPressed: () => _editSchedule(ambiguous: event.sessions.isEmpty && startsAt == null),
                 icon: Icon(Icons.schedule),
                 label: Text(startsAt == null ? '날짜와 시간 선택' : _date(startsAt!)),
                 style: OutlinedButton.styleFrom(
@@ -1622,6 +1748,11 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
                         event.sessions[i],
                         onTap: () => Navigator.pop(sheetContext, i),
                       ),
+                    TextButton.icon(
+                      onPressed: () => Navigator.pop(sheetContext, -1),
+                      icon: Icon(Icons.edit_calendar_outlined),
+                      label: Text('여기에 없는 일정이에요 · 직접 입력'),
+                    ),
                   ],
                 ),
               ),
@@ -1630,7 +1761,9 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
         ),
       ),
     );
-    if (picked != null && mounted) {
+    if (picked == -1) {
+      await _editSchedule();
+    } else if (picked != null && mounted) {
       setState(() {
         selectedSession = picked;
         _applySession(picked);
@@ -1728,7 +1861,17 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       _pageTitle('추천 행사', '관심 분야와 가까운 행사'),
-      SizedBox(height: 18),
+      SizedBox(height: 8),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: recommendationLoading ? null : () => _refresh(shuffle: true),
+          icon: Icon(Icons.shuffle, size: 18),
+          label: Text('다른 행사 보기'),
+          style: TextButton.styleFrom(padding: EdgeInsets.zero),
+        ),
+      ),
+      SizedBox(height: 6),
       if (recommendationLoading && recommended.isEmpty)
         _empty(Icons.search, '관련 행사 확인 중', '행사 정보를 확인하고 있어요.'),
       if (!recommendationLoading && recommended.isEmpty)
@@ -2080,7 +2223,6 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
             .setStringList('interested_events', interestedIds.toList());
       }
       _message(action == 'interested' ? '관심 표시했어요.' : '추천에 반영했어요.');
-      unawaited(_refresh());
     } catch (error) {
       if (interested && mounted) {
         setState(() => interestedIds = {...interestedIds}..remove(id));
@@ -2105,7 +2247,9 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
         'eventId': event['id'], 'action': 'not_interested',
         if (reason.isNotEmpty) 'reason': reason,
       });
-      await _refresh();
+      if (mounted) {
+        setState(() => recommended = recommended.where((item) => item['id'] != event['id']).toList());
+      }
       _message('추천에서 제외했어요.');
     } catch (error) { _message('저장하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
   }
