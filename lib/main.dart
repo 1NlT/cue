@@ -517,7 +517,8 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
       return;
     }
     if (deadlineController.text.trim().isNotEmpty &&
-        !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(deadlineController.text.trim())) {
+        (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(deadlineController.text.trim()) ||
+         DateTime.tryParse(deadlineController.text.trim()) == null)) {
       _message('신청 마감일은 YYYY-MM-DD 형식으로 입력해 주세요.');
       return;
     }
@@ -788,6 +789,9 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
 
   void _reset() {
     setState(() {
+      deadlineController.clear();
+      feeController.clear();
+      showUnknownInputs = false;
       image = null;
       document = null;
       candidate = null;
@@ -1817,6 +1821,10 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
         sessions: [session],
       );
       titleController.text = candidate!.title;
+      deadlineController.text = candidate!.applicationDeadline == null
+          ? '' : candidate!.applicationDeadline!.substring(0, 10);
+      feeController.text = candidate!.participationFee ?? '';
+      showUnknownInputs = false;
       selectedCategory = candidate!.category;
       selectedSession = 0;
       _applySession(0);
