@@ -2062,8 +2062,72 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
           label: Text('일정 및 추천 새로고침'),
         ),
       ),
+      SizedBox(height: 18),
+      _card(
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _eyebrow('관심사 기록'),
+            SizedBox(height: 8),
+            Text(
+              '관심 표시와 추천 기록, Cue가 파악한 관심사를 모두 지워요. 저장한 일정은 그대로 남아요.',
+              style: TextStyle(color: muted, height: 1.5),
+            ),
+            SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: _resetInterests,
+              icon: Icon(Icons.delete_sweep_outlined),
+              label: Text('내 관심사 기록 초기화'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Color(0xFFE5484D),
+                side: BorderSide(color: Color(0xFFE5484D)),
+                minimumSize: Size.fromHeight(50),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+              ),
+            ),
+          ],
+        ),
+      ),
     ],
   );
+
+  Future<void> _resetInterests() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('관심사 기록을 초기화할까요?'),
+        content: Text(
+          '관심 표시, 추천 기록, Cue가 파악한 관심사가 모두 삭제돼요. 저장한 일정은 지워지지 않고, 삭제한 기록은 되돌릴 수 없어요.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: Color(0xFFE5484D)),
+            child: Text('초기화'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await api.delete('/v1/interests');
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('interested_events');
+      if (!mounted) return;
+      setState(() {
+        interestedIds = {};
+        recommendationSeed = null;
+      });
+      _message('관심사 기록을 초기화했어요.');
+      await _refresh();
+    } catch (error) {
+      _message('초기화하지 못했어요. 잠시 후 다시 시도해 주세요.');
+    }
+  }
 
   Widget _eventTile(Map<String, dynamic> event, {bool recommended = false}) {
     DateTime? date;

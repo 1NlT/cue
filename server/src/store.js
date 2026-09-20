@@ -257,6 +257,14 @@ export const store = {
         db.prepare('DELETE FROM agent_memories WHERE id=? AND user_id=?').run(old.id,userId);
     }
   },
+  // 관심 표시·추천 기록·학습된 관심사를 지우고 저장한 일정은 남긴다.
+  resetInterests(userId) {
+    transact(() => {
+      for (const table of ['event_interactions', 'interest_profiles', 'agent_memories', 'recommendations'])
+        db.prepare(`DELETE FROM ${table} WHERE user_id=?`).run(userId);
+      db.prepare("DELETE FROM user_events WHERE user_id=? AND origin='recommendation' AND status IN ('viewed','interested','dismissed','discovered')").run(userId);
+    });
+  },
   interests(userId) { return db.prepare('SELECT interest_key AS interestKey,score,confidence,evidence_count AS evidenceCount,last_updated_at AS lastUpdatedAt FROM interest_profiles WHERE user_id=? ORDER BY score DESC').all(userId); },
   memories(userId) { return db.prepare('SELECT id,memory_type AS memoryType,content,confidence,evidence_count AS evidenceCount,expires_at AS expiresAt FROM agent_memories WHERE user_id=? AND (expires_at IS NULL OR expires_at>?)').all(userId,now()); },
   recommendations(userId, { seed = null, seen = new Set() } = {}) {

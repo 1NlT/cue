@@ -25,3 +25,26 @@ test('overlapping interest recomputes for one user never run at the same time', 
     assert.deepEqual(log, ['start', 'end', 'start', 'end', 'start', 'end']);
   } finally { globalThis.fetch = realFetch; }
 });
+
+test('interest reset deletes only this user\'s rows and uses the server key for interactions', async () => {
+  process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-key';
+  const userId = '33333333-3333-3333-3333-333333333333';
+  const realFetch = globalThis.fetch;
+  const deletes = [];
+  globalThis.fetch = async (url, options) => {
+    const target = new URL(url);
+    if (!target.pathname.startsWith('/rest/v1/')) return realFetch(url, options);
+    if (options.method === 'DELETE') deletes.push({ table: target.pathname.split('/').pop(), user: target.searchParams.get('user_id'),
+      auth: options.headers.authorization, extra: target.searchParams.get('origin') });
+    return new Response('[]', { status: 200 });
+  };
+  try {
+    await new CloudStore({ id: userId, token: 'user-token' }, { url: 'https://example.supabase.co', key: 'k' }).resetInterests();
+    const tables = deletes.map((item) => item.table).sort();
+    assert.deepEqual(tables, ['agent_memories', 'event_interactions', 'interest_profiles', 'recommendations', 'user_events']);
+    assert.ok(deletes.every((item) => item.user === `eq.${userId}`));
+    assert.equal(deletes.find((item) => item.table === 'event_interactions').auth, 'Bearer service-key');
+    assert.equal(deletes.find((item) => item.table === 'user_events').auth, 'Bearer user-token');
+    assert.equal(deletes.find((item) => item.table === 'user_events').extra, 'eq.recommendation');
+  } finally { globalThis.fetch = realFetch; }
+});

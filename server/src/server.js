@@ -316,6 +316,10 @@ export const server = http.createServer(async (req, res) => {
       }
       return send(res, 200, { events });
     }
+    if (req.method === 'DELETE' && route === '/v1/interests') {
+      await data.resetInterests(user.id);
+      return send(res, 200, { reset: true });
+    }
     if (req.method === 'GET' && route === '/v1/memories') return send(res, 200, { memories: await data.memories(user.id) });
     if (req.method === 'GET' && route === '/v1/goals') return send(res, 200, { goals: await data.goals(user.id) });
     if (req.method === 'POST' && route === '/v1/goals') {

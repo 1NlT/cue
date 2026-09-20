@@ -45,9 +45,9 @@ export class CloudStore {
     this.key = key;
   }
 
-  async request(method, table, { filters = {}, body, upsert, select = '*', all = false } = {}) {
+  async request(method, table, { filters = {}, body, upsert, select = '*', all = false, server = false } = {}) {
     if (!tables.has(table)) throw new Error('Unsupported table');
-    const computed = serverComputedTables.has(table);
+    const computed = serverComputedTables.has(table) || server;
     if (computed) {
       if (method === 'POST') {
         if (!Array.isArray(body) || body.some((row) => row.user_id !== this.userId))
@@ -97,6 +97,8 @@ export class CloudStore {
   }
   async patch(table, filters, body) { return this.request('PATCH', table, { filters, body }); }
   async remove(table, filters) { return this.request('DELETE', table, { filters }); }
+  // 사용자 토큰에 삭제 권한이 없는 표(관심 기록 등)를 서버 키로 지운다. 항상 내 user_id로만 지운다.
+  async removeAsServer(table, filters) { return this.request('DELETE', table, { filters, server: true }); }
 
   async migrateLocal(local) {
     if (local.cloudSynced(this.userId)) return false;
@@ -117,6 +119,19 @@ export class CloudStore {
     }
     local.markCloudSynced(this.userId);
     return true;
+  }
+
+  // 관심 표시·추천 기록·AI가 학습한 관심사를 모두 지운다. 저장한 일정은 그대로 둔다.
+  async resetInterests() {
+    await this.settled();
+    const mine = { user_id: eq(this.userId) };
+    await Promise.all([
+      this.removeAsServer('event_interactions', mine),
+      this.remove('interest_profiles', mine),
+      this.remove('agent_memories', mine),
+      this.remove('recommendations', mine),
+      this.remove('user_events', { ...mine, origin: 'eq.recommendation', status: 'in.(viewed,interested,dismissed,discovered)' }),
+    ]);
   }
 
   async onProfileChanged(previous, profile) {
