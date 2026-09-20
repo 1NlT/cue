@@ -1,5 +1,6 @@
 import { categories, categoryGroup } from './categories.js';
 import { validateSavedEvent } from './domain.js';
+import { formats, domains } from './classification.js';
 
 const maxDiscoveryAge = 180 * 86400000;
 const officialDomains = {
@@ -21,8 +22,10 @@ const normalizeUrl = (value) => {
 
 export function discoveryTopic(interests) {
   return [...interests.entries()]
-    .filter(([key, score]) => score > 0 && categories.includes(key) && key !== '기타')
-    .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+    .filter(([key, score]) => score > 0 && key.startsWith('domain:'))
+    .sort((a, b) => b[1] - a[1])
+    .map(([key]) => ({ AI: '기술', 소프트웨어: '기술', 미술: '미술 전시', 음악: '음악', 교육: '교육', 문화: '전시' })[key.slice(7)])
+    .find((topic) => topic && categories.includes(topic)) || null;
 }
 
 export function verifiedDiscoveries(response, currentTime = Date.now()) {
@@ -64,12 +67,13 @@ export async function discoverEvents(topic, { fetchImpl = fetch, currentTime = D
       type: 'object', additionalProperties: false,
       properties: {
         title: { type: 'string' }, category: { type: 'string', enum: categories },
+        format: { type: 'string', enum: formats }, domains: { type: 'array', items: { type: 'string', enum: domains } },
         tags: { type: 'array', items: { type: 'string' } },
         startsAt: { type: 'string' }, endsAt: { type: 'string' },
         venue: { type: 'string' }, description: { type: 'string' },
         sourceUrl: { type: 'string' },
       },
-      required: ['title', 'category', 'tags', 'startsAt', 'endsAt', 'venue', 'description', 'sourceUrl'],
+      required: ['title', 'category', 'format', 'domains', 'tags', 'startsAt', 'endsAt', 'venue', 'description', 'sourceUrl'],
     } } }, required: ['events'],
   };
   const response = await fetchImpl('https://api.openai.com/v1/responses', {
@@ -79,7 +83,7 @@ export async function discoverEvents(topic, { fetchImpl = fetch, currentTime = D
       model: process.env.OPENAI_MODEL || 'gpt-4.1-mini', store: false,
       tools: [{ type: 'web_search', search_context_size: 'medium' }],
       tool_choice: 'required', include: ['web_search_call.action.sources'],
-      input: `현재 ${new Date(currentTime).toISOString()}. 한국에서 앞으로 180일 안에 열리는 실제 ${topic} (${family}) 행사를 최대 5개 찾으세요. ${officialDomains[family] ? `site:${officialDomains[family].join(' 또는 site:')} 사이트에서만 찾으세요.` : ''} 각 행사에 대해 주최자·공공기관·공식 행사장의 개별 상세 페이지에서 제목, 날짜와 시간, 장소를 확인하세요. 검색 결과 목록·검색 페이지·홈페이지 주소는 제외하세요. 페이지에 근거가 없으면 반환하지 마세요. sourceUrl은 검색한 공식 상세 페이지 URL 그대로여야 합니다. startsAt과 endsAt은 +09:00을 포함한 ISO 8601로 쓰세요. 진행 중인 전시처럼 기간과 관람 시간이 따로 있다면 내일 이후 실제 관람 가능한 날의 방문 시간 14:00~16:00을 추천하고 후보마다 서로 다른 방문 날짜를 택하세요. description에 '추천 방문 시간'임을 밝히세요. 이미 지난 일정이나 운영 시간이 불명확한 행사는 제외하세요. 결과는 한국어로 작성하고 관련된 세부 카테고리를 고르세요. 찾지 못하면 events를 빈 배열로 반환하세요.`,
+      input: `현재 ${new Date(currentTime).toISOString()}. 한국에서 앞으로 180일 안에 열리는 실제 ${topic} (${family}) 행사를 최대 5개 찾으세요. ${officialDomains[family] ? `site:${officialDomains[family].join(' 또는 site:')} 사이트에서만 찾으세요.` : ''} 각 행사에 대해 주최자·공공기관·공식 행사장의 개별 상세 페이지에서 제목, 날짜와 시간, 장소를 확인하세요. 검색 결과 목록·검색 페이지·홈페이지 주소는 제외하세요. 페이지에 근거가 없으면 반환하지 마세요. sourceUrl은 검색한 공식 상세 페이지 URL 그대로여야 합니다. startsAt과 endsAt은 +09:00을 포함한 ISO 8601로 쓰세요. 진행 중인 전시처럼 기간과 관람 시간이 따로 있다면 내일 이후 실제 관람 가능한 날의 방문 시간 14:00~16:00을 추천하고 후보마다 서로 다른 방문 날짜를 택하세요. description에 '추천 방문 시간'임을 밝히세요. 이미 지난 일정이나 운영 시간이 불명확한 행사는 제외하세요. 결과는 한국어로 작성하고 관련된 세부 카테고리를 고르세요. format에는 행사 형식, domains에는 제목과 상세 내용으로 확인한 실제 주제 분야만 넣으세요. 찾지 못하면 events를 빈 배열로 반환하세요.`,
       text: { format: { type: 'json_schema', name: 'event_discovery', strict: true, schema } },
     }),
     signal: AbortSignal.timeout(60000),

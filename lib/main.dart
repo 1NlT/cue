@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:device_calendar/device_calendar.dart' as calendar;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -97,13 +98,23 @@ class CueApp extends StatelessWidget {
 
 enum ScanStage { idle, processing, notEvent, review, saved }
 
+class CueDocument {
+  CueDocument(this.path, this.name);
+  final String path;
+  final String name;
+  int? lengthSync() => File(path).lengthSync();
+  Future<int?> length() async => File(path).length();
+  Future<List<int>> readAsBytes() => File(path).readAsBytes();
+}
+
 class CueHome extends StatefulWidget {
   const CueHome({super.key});
   @override
   State<CueHome> createState() => _CueHomeState();
 }
 
-class _CueHomeState extends State<CueHome> {
+class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
+  static const shareChannel = MethodChannel('cue/shared');
   bool get isDark => Theme.of(context).brightness == Brightness.dark;
   Color get ink => isDark ? Color(0xFFEDF7FF) : Color(0xFF17344E);
   Color get muted => isDark ? Color(0xFFA2BDD0) : Color(0xFF65809A);
@@ -119,10 +130,13 @@ class _CueHomeState extends State<CueHome> {
   final calendarPlugin = calendar.DeviceCalendarPlugin();
   final titleController = TextEditingController();
   final venueController = TextEditingController();
+  final deadlineController = TextEditingController();
+  final feeController = TextEditingController();
+  bool showUnknownInputs = false;
   int tab = 0;
   ScanStage stage = ScanStage.idle;
   File? image;
-  PlatformFile? document;
+  CueDocument? document;
   CueEvent? candidate;
   int? selectedSession;
   DateTime? startsAt;
@@ -150,14 +164,47 @@ class _CueHomeState extends State<CueHome> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _boot();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_takeSharedFile());
+  }
+
+  Future<void> _takeSharedFile() async {
+    if (!Platform.isIOS || loading) return;
+    try {
+      final path = await shareChannel.invokeMethod<String>('takeSharedFile');
+      if (path == null || !mounted) return;
+      final shared = File(path);
+      if (!await shared.exists()) return;
+      final extension = path.toLowerCase();
+      setState(() {
+        tab = 0;
+        stage = ScanStage.idle;
+        candidate = null;
+        if (extension.endsWith('.pdf')) {
+          document = CueDocument(path, '공유한 문서.pdf');
+          image = null;
+        } else {
+          image = shared;
+          document = null;
+        }
+      });
+      await _analyze();
+    } catch (error) { _message('공유 파일을 열지 못했습니다: $error'); }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     progressTimer?.cancel();
     titleController.dispose();
     venueController.dispose();
+    deadlineController.dispose();
+    feeController.dispose();
     super.dispose();
   }
 
@@ -179,7 +226,7 @@ class _CueHomeState extends State<CueHome> {
     await minimum;
     if (!mounted) return;
     setState(() => loading = false);
-    unawaited(_refresh());
+    unawaited(() async { await _refresh(); await _takeSharedFile(); }());
   }
 
   Future<void> _refresh() async {
@@ -259,13 +306,14 @@ class _CueHomeState extends State<CueHome> {
       );
       if (files.isEmpty || !mounted) return;
       final picked = files.single;
+      if (picked.path == null) throw CueApiException('문서 경로를 읽지 못했습니다. 다시 선택해 주세요.');
       final length = picked.lengthSync() ?? await picked.length();
       if (length == null || length == 0 || length > 10 * 1024 * 1024) {
         throw CueApiException('10MB 이하의 PDF 또는 한글 파일을 선택해 주세요.');
       }
       if (!mounted) return;
       setState(() {
-        document = picked;
+        document = CueDocument(picked.path!, picked.name);
         image = null;
         stage = ScanStage.idle;
         statusMessage = null;
@@ -335,6 +383,9 @@ class _CueHomeState extends State<CueHome> {
         stage = ScanStage.review;
         titleController.text = event.title;
         selectedCategory = event.category;
+        deadlineController.text = event.applicationDeadline == null ? '' : event.applicationDeadline!.substring(0, 10);
+        feeController.text = event.participationFee ?? '';
+        showUnknownInputs = false;
         selectedSession = event.sessions.length == 1 ? 0 : null;
         _applySession(selectedSession);
       });
@@ -457,6 +508,11 @@ class _CueHomeState extends State<CueHome> {
       _message('종료 시간이 시작 시간보다 빨라요.');
       return;
     }
+    if (deadlineController.text.trim().isNotEmpty &&
+        !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(deadlineController.text.trim())) {
+      _message('신청 마감일은 YYYY-MM-DD 형식으로 입력해 주세요.');
+      return;
+    }
     setState(() => saving = true);
     try {
       final permission = await calendarPlugin.requestPermissions();
@@ -502,6 +558,11 @@ class _CueHomeState extends State<CueHome> {
           'category': selectedCategory,
           'description': candidate!.description,
           'tags': candidate!.tags,
+          'format': candidate!.format,
+          'domains': candidate!.domains,
+          'applicationDeadline': deadlineController.text.trim().isEmpty
+              ? null : DateTime.tryParse('${deadlineController.text.trim()}T23:59:00')?.toUtc().toIso8601String(),
+          'participationFee': feeController.text.trim().isEmpty ? null : feeController.text.trim(),
           'calendarId': target.id,
           'calendarEventId': result!.data,
           'reminderMinutes': reminderMinutes,
@@ -628,9 +689,12 @@ class _CueHomeState extends State<CueHome> {
           'startsAt': draft.startsAt.toUtc().toIso8601String(),
           'endsAt': draft.endsAt.toUtc().toIso8601String(),
           'category': draft.category,
+          'format': savedEvent['format'] ?? '기타',
+          'domains': savedEvent['domains'] ?? [],
           'description': savedEvent['description'] ?? '',
           'tags': savedEvent['tags'] ?? [],
           'applicationDeadline': savedEvent['applicationDeadline'],
+          'participationFee': savedEvent['participationFee'],
           'locationAddress': savedEvent['locationAddress'],
           'sourceUrl': savedEvent['sourceUrl'],
           'calendarId': deviceEvent.calendarId,
@@ -1083,6 +1147,8 @@ class _CueHomeState extends State<CueHome> {
                 SizedBox(height: 12),
                 Text(event.description, style: TextStyle(color: muted)),
               ],
+              SizedBox(height: 10),
+              Text('형식: ${event.format} · 분야: ${event.domains.join('·')}', style: TextStyle(color: muted)),
             ],
           ),
         ),
@@ -1133,6 +1199,25 @@ class _CueHomeState extends State<CueHome> {
           ),
         ),
         SizedBox(height: 14),
+        if (event.applicationDeadline == null || event.participationFee == null) ...[
+          _card(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _eyebrow('확인하지 못한 정보'),
+            if (event.applicationDeadline == null) Text('• 신청 마감일'),
+            if (event.participationFee == null) Text('• 참가비'),
+            SizedBox(height: 10),
+            Text('안내문에 없거나 확실하지 않아 비워 두었어요.', style: TextStyle(color: muted)),
+            Wrap(spacing: 8, children: [
+              TextButton(onPressed: () => setState(() => showUnknownInputs = true), child: Text('직접 입력')),
+              TextButton(onPressed: () => setState(() { showUnknownInputs = false; deadlineController.clear(); feeController.clear(); }), child: Text('이 정보 없이 계속')),
+            ]),
+            if (showUnknownInputs) ...[
+              TextField(controller: deadlineController, decoration: InputDecoration(labelText: '신청 마감일 (YYYY-MM-DD)'), keyboardType: TextInputType.datetime),
+              SizedBox(height: 8),
+              TextField(controller: feeController, decoration: InputDecoration(labelText: '참가비 (예: 무료, 10,000원)')),
+            ],
+          ])),
+          SizedBox(height: 14),
+        ],
         _card(
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1629,7 +1714,7 @@ class _CueHomeState extends State<CueHome> {
                   label: Text('관심 있음'),
                 ),
                 TextButton.icon(
-                  onPressed: () => _feedback(event, 'not_interested'),
+                  onPressed: () => _dismissRecommendation(event),
                   icon: Icon(Icons.not_interested_outlined),
                   label: Text('관심 없음'),
                 ),
@@ -1668,6 +1753,27 @@ class _CueHomeState extends State<CueHome> {
     }
   }
 
+  Future<void> _dismissRecommendation(Map<String, dynamic> event) async {
+    final reason = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(title: Text('관심 없는 이유 (선택사항)')),
+        for (final choice in ['관심 없는 분야', '시간 안 맞음', '장소가 멂', '참가 조건 안 맞음', '이미 알고 있는 행사'])
+          ListTile(title: Text(choice), onTap: () => Navigator.pop(context, choice)),
+        TextButton(onPressed: () => Navigator.pop(context, ''), child: Text('이유 없이 관심 없음')),
+      ])),
+    );
+    if (reason == null) return;
+    try {
+      await api.post('/v1/interactions', {
+        'eventId': event['id'], 'action': 'not_interested',
+        if (reason.isNotEmpty) 'reason': reason,
+      });
+      await _refresh();
+      _message('추천에서 제외했어요.');
+    } catch (error) { _message(error.toString()); }
+  }
+
   Future<void> _planRecommendation(Map<String, dynamic> event) async {
     try {
       await api.post('/v1/interactions', {
@@ -1696,6 +1802,10 @@ class _CueHomeState extends State<CueHome> {
         tags: (event['tags'] as List<dynamic>? ?? [])
             .whereType<String>()
             .toList(),
+        format: event['format'] as String? ?? '기타',
+        domains: (event['domains'] as List<dynamic>? ?? []).whereType<String>().toList(),
+        applicationDeadline: event['applicationDeadline'] as String?,
+        participationFee: event['participationFee'] as String?,
         sessions: [session],
       );
       titleController.text = candidate!.title;

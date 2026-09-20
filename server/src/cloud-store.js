@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { interestSignals, memoryFromSignal, rankRecommendations } from './personalization.js';
+import { classifyEvent } from './classification.js';
 
 const tables = new Set([
   'profiles', 'events', 'event_sessions', 'user_events', 'event_interactions',
@@ -12,7 +13,7 @@ const eventFromRow = (row, userEvent = {}) => ({
   id: row.id, title: row.title, venue: row.location_name,
   startsAt: row.start_at, endsAt: row.end_at, category: row.category,
   description: row.description, createdAt: row.created_at,
-  tags: row.tags || [], applicationDeadline: row.application_deadline,
+  tags: row.tags || [], ...classifyEvent({ ...row, title: row.title, description: row.description, category: row.category, tags: row.tags, domains: row.domains, format: row.format }), applicationDeadline: row.application_deadline, participationFee: row.participation_fee,
   locationAddress: row.location_address, sourceUrl: row.source_url,
   ...(userEvent.calendar_id != null ? { calendarId: userEvent.calendar_id } : {}),
   ...(userEvent.calendar_event_id != null ? { calendarEventId: userEvent.calendar_event_id } : {}),
@@ -21,7 +22,7 @@ const eventFromRow = (row, userEvent = {}) => ({
 const eventRow = (event, userId, sourceType = 'scan') => ({
   id: event.id, owner_user_id: userId, title: event.title,
   description: event.description || '', category: event.category,
-  tags: event.tags || [], start_at: event.startsAt, end_at: event.endsAt,
+  tags: event.tags || [], format: event.format, domains: event.domains || [], participation_fee: event.participationFee || null, start_at: event.startsAt, end_at: event.endsAt,
   application_deadline: event.applicationDeadline || null,
   location_name: event.venue, location_address: event.locationAddress || null,
   source_url: event.sourceUrl || null, source_type: sourceType,
@@ -203,7 +204,7 @@ export class CloudStore {
       if (event) events.set(id, event);
     }
     const scores = interestSignals(rows.map((row) => ({ ...row,
-      category: events.get(row.event_id)?.category, tags: events.get(row.event_id)?.tags || [],
+      ...events.get(row.event_id), metadata: row.metadata,
     })));
     const interests = [], memories = [];
     for (const [key, value] of scores) {
@@ -226,7 +227,7 @@ export class CloudStore {
     const profile = await this.one('profiles', { user_id: eq(this.userId) });
     if (!profile?.personalization_enabled || !profile.recommendation_enabled) return [];
     let interestRows = await this.interests();
-    if (!interestRows.some((row) => row.score > 0) &&
+    if (!interestRows.some((row) => row.interestKey.startsWith('domain:')) &&
         (await this.rows('event_interactions', { user_id: eq(this.userId), action: 'eq.saved' })).length) {
       await this.recomputeInterests();
       interestRows = await this.interests();

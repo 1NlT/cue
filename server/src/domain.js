@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { categories } from './categories.js';
+import { classifyEvent } from './classification.js';
 
 export { categories } from './categories.js';
 const hasTimezone = (value) => /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/.test(value);
@@ -24,9 +25,19 @@ export function cleanExtraction(raw) {
       const end = Date.parse(item.endsAt);
       return hasTimezone(item.startsAt) && hasTimezone(item.endsAt) && Number.isFinite(start) && Number.isFinite(end) && end > start && item.venue;
     });
+  const classification = classifyEvent({ ...raw, title, category, tags });
   return {
-    id: randomUUID(), title, category, tags,
+    id: randomUUID(), title, category, tags, ...classification,
     description: String(raw.description || '').trim().slice(0, 500),
+    applicationDeadline: typeof raw.application_deadline === 'string' &&
+      hasTimezone(raw.application_deadline) && Number.isFinite(Date.parse(raw.application_deadline))
+      ? raw.application_deadline : null,
+    participationFee: String(raw.participation_fee || '').trim().slice(0, 100) || null,
+    fieldStatus: {
+      applicationDeadline: typeof raw.application_deadline === 'string' &&
+        hasTimezone(raw.application_deadline) && Number.isFinite(Date.parse(raw.application_deadline)) ? 'known' : 'unknown',
+      participationFee: raw.participation_fee ? 'known' : 'unknown',
+    },
     sessions,
     needsManualDetails: sessions.length === 0,
   };
@@ -51,11 +62,13 @@ export function validateSavedEvent(body) {
   const applicationDeadline = body.applicationDeadline == null ? null : String(body.applicationDeadline);
   if (applicationDeadline && (!hasTimezone(applicationDeadline) || !Number.isFinite(Date.parse(applicationDeadline)))) throw invalid('신청 마감일이 올바르지 않습니다.');
   const sourceUrl = typeof body.sourceUrl === 'string' && /^https:\/\//.test(body.sourceUrl) ? body.sourceUrl.slice(0, 500) : null;
+  const classification = classifyEvent(body);
   return {
     id: randomUUID(), title, venue,
     startsAt: new Date(start).toISOString(), endsAt: new Date(end).toISOString(),
     category: categories.includes(body.category) ? body.category : '기타',
-    tags, applicationDeadline: applicationDeadline ? new Date(applicationDeadline).toISOString() : null,
+    tags, ...classification, applicationDeadline: applicationDeadline ? new Date(applicationDeadline).toISOString() : null,
+    participationFee: String(body.participationFee || '').trim().slice(0, 100) || null,
     locationAddress: String(body.locationAddress || '').trim().slice(0, 200) || null, sourceUrl,
     description: String(body.description || '').trim().slice(0, 500),
     calendarId, calendarEventId, reminderMinutes,

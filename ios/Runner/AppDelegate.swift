@@ -12,5 +12,13 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let shareChannel = FlutterMethodChannel(name: "cue/shared", binaryMessenger: engineBridge.applicationRegistrar.messenger())
+    shareChannel.setMethodCallHandler { call, result in
+      guard call.method == "takeSharedFile" else { result(FlutterMethodNotImplemented); return }
+      let defaults = UserDefaults(suiteName: "group.com.hanoo.cue")
+      let path = defaults?.string(forKey: "pendingSharePath")
+      defaults?.removeObject(forKey: "pendingSharePath")
+      result(path)
+    }
   }
 }

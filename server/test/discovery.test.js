@@ -28,10 +28,10 @@ test('only sourced, future event detail pages enter discovery catalog', () => {
 });
 
 test('broad saved category matches verified finer exhibition category', () => {
-  assert.equal(discoveryTopic(new Map([['전시', 8], ['기타', 20]])), '전시');
+  assert.equal(discoveryTopic(new Map([['domain:미술', 8], ['domain:기타', 20]])), '미술 전시');
   const results = rankRecommendations({
     catalog: [{ id: 'detail', ...candidate }], saved: [],
-    interests: new Map([['전시', 8]]), excluded: new Set(), currentTime,
+    interests: new Map([['domain:미술', 8]]), excluded: new Set(), currentTime,
   });
   assert.equal(results.length, 1);
   assert.ok(results[0].score > 0);

@@ -19,6 +19,17 @@ test('keeps distinct time and venue choices, ignoring unusable candidates', () =
   assert.equal(event.sessions[1].venue, '부산');
 });
 
+test('analysis separates event form, topic, and unknown details', () => {
+  const event = cleanExtraction({ is_event: true, title: 'AI 교육 정책방향 탐색토론회',
+    category: '강연', format: '토론회', domains: ['AI', '교육', '정책'],
+    tags: ['인공지능', '교육정책'], application_deadline: '', participation_fee: '', sessions: [] });
+  assert.equal(event.format, '토론회');
+  assert.deepEqual(event.domains, ['AI', '교육', '정책']);
+  assert.equal(event.fieldStatus.applicationDeadline, 'unknown');
+  assert.equal(event.fieldStatus.participationFee, 'unknown');
+  assert.equal(event.applicationDeadline, null);
+});
+
 test('recommendations require a saved interest and a future matching event', () => {
   const catalog = [
     { title: '전시 A', category: '전시', startsAt: '2027-01-02T00:00:00Z', endsAt: '2027-01-03T00:00:00Z' },

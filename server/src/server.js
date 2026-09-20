@@ -8,6 +8,7 @@ import { CloudStore, importCloudCatalog } from './cloud-store.js';
 import { discoverEvents, discoveryTopic } from './discovery.js';
 import { categoryGroup } from './categories.js';
 import { discoverSemaExhibitions } from './sema.js';
+import { formats, domains } from './classification.js';
 
 const port = Number(process.env.PORT || 8787);
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
@@ -131,10 +132,12 @@ const extractionSchema = {
   properties: {
     is_event: { type: 'boolean' }, title: { type: 'string' },
     category: { type: 'string', enum: categories },
+    format: { type: 'string', enum: formats }, domains: { type: 'array', items: { type: 'string', enum: domains } },
+    application_deadline: { type: 'string' }, participation_fee: { type: 'string' },
     tags: { type: 'array', items: { type: 'string' } },
     description: { type: 'string' },
     sessions: { type: 'array', items: sessionSchema },
-  }, required: ['is_event', 'title', 'category', 'tags', 'description', 'sessions'],
+  }, required: ['is_event', 'title', 'category', 'format', 'domains', 'application_deadline', 'participation_fee', 'tags', 'description', 'sessions'],
 };
 
 async function askOpenAI(sourceParts, instruction, schema, name) {
@@ -269,7 +272,7 @@ export const server = http.createServer(async (req, res) => {
       const action = String(body.action || '');
       if (!['viewed','interested','not_interested','recommendation_opened','recommendation_dismissed','completed'].includes(action))
         return send(res, 400, { error: '지원하지 않는 행동입니다.' });
-      if (!(await data.interact(user.id,String(body.eventId || ''),action))) return send(res, 404, { error: '행사를 찾을 수 없습니다.' });
+      if (!(await data.interact(user.id,String(body.eventId || ''),action, { reason: ['관심 없는 분야','시간 안 맞음','장소가 멂','참가 조건 안 맞음','이미 알고 있는 행사'].includes(body.reason) ? body.reason : null }))) return send(res, 404, { error: '행사를 찾을 수 없습니다.' });
       return send(res, 201, { recorded: true });
     }
     if (req.method === 'DELETE' && route === '/v1/account') {
@@ -302,7 +305,7 @@ export const server = http.createServer(async (req, res) => {
       const duration = [60, 120, 180].includes(Number(body.defaultDurationMinutes))
         ? Number(body.defaultDurationMinutes) : 120;
       const extracted = await askOpenAI(sourceParts,
-        `행사 정보를 한국어로 추출. 현재 시각 ${new Date().toISOString()}, 사용자 UTC 오프셋 ${offset}분. 행사 주제 키워드는 tags에 최대 8개. 서로 다른 날짜·시간·장소 조합은 sessions의 별도 항목으로 만들고 조합이 불명확하면 만들지 말 것. 시작/종료는 ISO 8601 오프셋 포함. 종료 시간이 없으면 시작+${duration}분. 연도가 불명확하면 현재 이후 가장 가까운 연도만 추론. 날짜 또는 장소를 알 수 없는 경우 sessions는 빈 배열. 입력에 없는 제목은 만들지 말 것.`,
+        `행사 정보를 한국어로 추출. 현재 시각 ${new Date().toISOString()}, 사용자 UTC 오프셋 ${offset}분. format은 행사 형식, domains는 실제 주제 분야, tags는 세부 키워드로 분리. AI·교육 정책 토론회는 토론회 형식과 AI·교육·정책 분야이고 미술 전시가 아님. 행사 주제 키워드는 tags에 최대 8개. 신청 마감일과 참가비가 명시되지 않았다면 빈 문자열로 반환하고 만들지 말 것. 서로 다른 날짜·시간·장소 조합은 sessions의 별도 항목으로 만들고 조합이 불명확하면 만들지 말 것. 시작/종료는 ISO 8601 오프셋 포함. 종료 시간이 없으면 시작+${duration}분. 연도가 불명확하면 현재 이후 가장 가까운 연도만 추론. 날짜 또는 장소를 알 수 없는 경우 sessions는 빈 배열. 입력에 없는 제목은 만들지 말 것.`,
         extractionSchema, 'event_details');
       const event = cleanExtraction(extracted);
       return send(res, 200, event ? { status: 'event', event } : { status: 'not_event' });

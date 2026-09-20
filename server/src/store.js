@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { interestSignals, memoryFromSignal, rankRecommendations } from './personalization.js';
+import { classifyEvent } from './classification.js';
 
 const databasePath = path.resolve(process.env.CUE_DB_FILE || 'data/cue.sqlite');
 fs.mkdirSync(path.dirname(databasePath), { recursive: true, mode: 0o700 });
@@ -57,13 +58,16 @@ CREATE INDEX IF NOT EXISTS interactions_user_idx ON event_interactions(user_id,c
 CREATE INDEX IF NOT EXISTS recommendations_user_idx ON recommendations(user_id,created_at);
 `);
 
+for (const [column, type] of [['format', "TEXT NOT NULL DEFAULT '기타'"], ['domains', "TEXT NOT NULL DEFAULT '[]'"], ['participation_fee', 'TEXT']]) {
+  if (!db.prepare('PRAGMA table_info(events)').all().some((row) => row.name === column)) db.exec(`ALTER TABLE events ADD COLUMN ${column} ${type}`);
+}
 const now = () => new Date().toISOString();
 const bool = (value) => value === 1;
 const asEvent = (row) => ({
   id: row.id, title: row.title, venue: row.location_name,
   startsAt: row.start_at, endsAt: row.end_at, category: row.category,
   description: row.description, createdAt: row.created_at,
-  tags: JSON.parse(row.tags || '[]'), applicationDeadline: row.application_deadline,
+  tags: JSON.parse(row.tags || '[]'), ...classifyEvent({ ...row, tags: JSON.parse(row.tags || '[]'), domains: JSON.parse(row.domains || '[]') }), applicationDeadline: row.application_deadline, participationFee: row.participation_fee,
   locationAddress: row.location_address, sourceUrl: row.source_url,
   ...(row.calendar_id != null ? { calendarId: row.calendar_id } : {}),
   ...(row.calendar_event_id != null ? { calendarEventId: row.calendar_event_id } : {}),
@@ -73,10 +77,10 @@ const asEvent = (row) => ({
 function insertEvent(event, ownerId, sourceType) {
   const timestamp = event.createdAt || now();
   db.prepare(`INSERT INTO events(id,owner_user_id,title,description,category,tags,start_at,end_at,application_deadline,location_name,
-    location_address,source_url,source_type,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    location_address,source_url,source_type,created_at,updated_at,format,domains,participation_fee) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(event.id, ownerId, event.title, event.description || '', event.category,
       JSON.stringify(event.tags || []), event.startsAt, event.endsAt, event.applicationDeadline || null,
-      event.venue, event.locationAddress || null, event.sourceUrl || null, sourceType, timestamp, timestamp);
+      event.venue, event.locationAddress || null, event.sourceUrl || null, sourceType, timestamp, timestamp, event.format || '기타', JSON.stringify(event.domains || []), event.participationFee || null);
   db.prepare(`INSERT INTO event_sessions(id,event_id,start_at,end_at,location_name) VALUES(?,?,?,?,?)`)
     .run(randomUUID(), event.id, event.startsAt, event.endsAt, event.venue);
 }
@@ -185,9 +189,9 @@ export const store = {
     if (!current) return null;
     transact(() => {
       db.prepare(`UPDATE events SET title=?,description=?,category=?,tags=?,start_at=?,end_at=?,application_deadline=?,
-        location_name=?,location_address=?,source_url=?,updated_at=? WHERE id=? AND owner_user_id=?`)
+        location_name=?,location_address=?,source_url=?,updated_at=?,format=?,domains=?,participation_fee=? WHERE id=? AND owner_user_id=?`)
         .run(event.title,event.description,event.category,JSON.stringify(event.tags || []),event.startsAt,event.endsAt,
-          event.applicationDeadline || null,event.venue,event.locationAddress || null,event.sourceUrl || null,now(),eventId,userId);
+          event.applicationDeadline || null,event.venue,event.locationAddress || null,event.sourceUrl || null,now(),event.format,JSON.stringify(event.domains || []),event.participationFee || null,eventId,userId);
       db.prepare(`UPDATE event_sessions SET start_at=?,end_at=?,location_name=? WHERE event_id=?`)
         .run(event.startsAt,event.endsAt,event.venue,eventId);
       db.prepare(`UPDATE user_events SET calendar_id=?,calendar_event_id=?,reminder_minutes=?,updated_at=? WHERE user_id=? AND event_id=?`)
@@ -231,7 +235,7 @@ export const store = {
     return true;
   },
   recomputeInterests(userId) {
-    const rows = db.prepare(`SELECT i.action,i.created_at,e.category,e.tags FROM event_interactions i JOIN events e ON e.id=i.event_id WHERE i.user_id=?`).all(userId);
+    const rows = db.prepare(`SELECT i.action,i.created_at,i.metadata,e.title,e.description,e.category,e.tags,e.format,e.domains FROM event_interactions i JOIN events e ON e.id=i.event_id WHERE i.user_id=?`).all(userId);
     const scores = interestSignals(rows);
     const activeMemories = new Set();
     db.prepare('DELETE FROM interest_profiles WHERE user_id=?').run(userId);
@@ -258,6 +262,9 @@ export const store = {
   recommendations(userId) {
     const profile = this.profile(userId);
     if (!profile?.personalizationEnabled || !profile.recommendationEnabled) return [];
+    if (!this.interests(userId).some((item) => item.interestKey.startsWith('domain:')) &&
+        db.prepare("SELECT 1 FROM event_interactions WHERE user_id=? AND action='saved' LIMIT 1").get(userId))
+      this.recomputeInterests(userId);
     const interests = new Map(this.interests(userId).map((item) => [item.interestKey,item.score]));
     const excluded = new Set(db.prepare("SELECT event_id FROM user_events WHERE user_id=? AND status IN ('saved','planned','completed','dismissed','unsaved')").all(userId).map((item) => item.event_id));
     const results = rankRecommendations({ catalog: this.catalog(), saved: this.saved(userId), interests, excluded });
@@ -289,7 +296,8 @@ export const store = {
   goals(userId) { return db.prepare('SELECT * FROM goals WHERE user_id=? ORDER BY created_at DESC').all(userId); },
   exportUser(userId) {
     const rows = (table, column = 'user_id') => db.prepare(`SELECT * FROM ${table} WHERE ${column}=?`).all(userId);
-    const events = rows('events', 'owner_user_id').map((row) => ({ ...row, tags: JSON.parse(row.tags || '[]') }));
+    const events = rows('events', 'owner_user_id').map((row) => ({ ...row,
+      tags: JSON.parse(row.tags || '[]'), domains: JSON.parse(row.domains || '[]') }));
     const eventIds = new Set(events.map((event) => event.id));
     return {
       events,

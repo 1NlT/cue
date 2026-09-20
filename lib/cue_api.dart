@@ -40,18 +40,30 @@ class CueEvent {
     required this.description,
     required this.sessions,
     this.tags = const [],
+    this.format = '기타',
+    this.domains = const [],
+    this.applicationDeadline,
+    this.participationFee,
   });
   final String title;
   final String category;
   final String description;
   final List<CueSession> sessions;
   final List<String> tags;
+  final String format;
+  final List<String> domains;
+  final String? applicationDeadline;
+  final String? participationFee;
 
   factory CueEvent.fromJson(Map<String, dynamic> json) => CueEvent(
     title: json['title'] as String? ?? '',
     category: json['category'] as String? ?? '기타',
     description: json['description'] as String? ?? '',
     tags: (json['tags'] as List<dynamic>? ?? []).whereType<String>().toList(),
+    format: json['format'] as String? ?? '기타',
+    domains: (json['domains'] as List<dynamic>? ?? []).whereType<String>().toList(),
+    applicationDeadline: json['applicationDeadline'] as String?,
+    participationFee: json['participationFee'] as String?,
     sessions: (json['sessions'] as List<dynamic>? ?? [])
         .map((e) => CueSession.fromJson(e as Map<String, dynamic>))
         .toList(),
