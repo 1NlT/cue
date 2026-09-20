@@ -425,6 +425,10 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
         selectedSession = event.sessions.length == 1 ? 0 : null;
         _applySession(selectedSession);
       });
+      // 시간·장소가 여러 개면 별도 선택창으로 바로 고르게 한다.
+      if (event.sessions.length > 1) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _chooseSession());
+      }
     } catch (error) {
       if (mounted) {
         setState(() => stage = ScanStage.idle);
@@ -532,6 +536,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
     if (candidate == null) return;
     if (candidate!.sessions.length > 1 && selectedSession == null) {
       _message('시간과 장소 중 하나를 선택해 주세요.');
+      unawaited(_chooseSession());
       return;
     }
     final title = titleController.text.trim();
@@ -1413,7 +1418,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
               _eyebrow('02  시간과 장소'),
               SizedBox(height: 8),
               if (event.sessions.length > 1) ...[
-                Text('한 가지를 선택해야 계속할 수 있어요.', style: TextStyle(color: muted)),
+                Text('한 가지를 선택해야 계속할 수 있어요. 아래에서 바꿀 수도 있어요.', style: TextStyle(color: muted)),
                 SizedBox(height: 13),
                 for (var i = 0; i < event.sessions.length; i++)
                   _sessionChoice(i, event.sessions[i]),
@@ -1507,10 +1512,74 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
     );
   }
 
-  Widget _sessionChoice(int index, CueSession session) => Padding(
+  Future<void> _chooseSession() async {
+    final event = candidate;
+    if (event == null || event.sessions.length < 2 || !mounted) return;
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(sheetContext).size.height * 0.75,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(22, 2, 22, 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '참석할 일정을 선택해 주세요',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: ink,
+                      ),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      '이 행사는 시간과 장소가 ${event.sessions.length}가지예요. 캘린더에 저장할 하나를 골라 주세요.',
+                      style: TextStyle(color: muted, height: 1.5),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  children: [
+                    for (var i = 0; i < event.sessions.length; i++)
+                      _sessionChoice(
+                        i,
+                        event.sessions[i],
+                        onTap: () => Navigator.pop(sheetContext, i),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        selectedSession = picked;
+        _applySession(picked);
+      });
+    }
+  }
+
+  Widget _sessionChoice(int index, CueSession session, {VoidCallback? onTap}) => Padding(
     padding: EdgeInsets.only(bottom: 9),
     child: InkWell(
-      onTap: () => setState(() {
+      onTap: onTap ?? () => setState(() {
         selectedSession = index;
         _applySession(index);
       }),
