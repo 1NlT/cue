@@ -8,6 +8,14 @@ const tables = new Set([
 ]);
 const serverComputedTables = new Set(['interest_profiles', 'agent_memories', 'recommendations']);
 const now = () => new Date().toISOString();
+// CloudStore는 요청마다 만들어지므로, 같은 사용자의 관심도 재계산이 겹치지 않게 모듈 단위로 순서를 맞춘다.
+const recomputeQueues = new Map();
+const serialized = (userId, task) => {
+  const run = (recomputeQueues.get(userId) || Promise.resolve()).catch(() => {}).then(task);
+  const tail = run.catch(() => {}).finally(() => { if (recomputeQueues.get(userId) === tail) recomputeQueues.delete(userId); });
+  recomputeQueues.set(userId, tail);
+  return run;
+};
 const eq = (value) => `eq.${value}`;
 const eventFromRow = (row, userEvent = {}) => ({
   id: row.id, title: row.title, venue: row.location_name,
@@ -196,7 +204,8 @@ export class CloudStore {
     }
     return true;
   }
-  async recomputeInterests() {
+  recomputeInterests() { return serialized(this.userId, () => this.computeInterests()); }
+  async computeInterests() {
     const rows = await this.rows('event_interactions', { user_id: eq(this.userId) });
     const events = new Map();
     for (const id of new Set(rows.map((row) => row.event_id))) {
@@ -220,8 +229,8 @@ export class CloudStore {
     }
     await this.remove('interest_profiles', { user_id: eq(this.userId) });
     await this.remove('agent_memories', { user_id: eq(this.userId) });
-    await this.insert('interest_profiles', interests);
-    await this.insert('agent_memories', memories);
+    await this.insert('interest_profiles', interests, 'user_id,interest_key');
+    await this.insert('agent_memories', memories, 'user_id,memory_type,interest_key');
   }
   async recommendations() {
     const profile = await this.one('profiles', { user_id: eq(this.userId) });
