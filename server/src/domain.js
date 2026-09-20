@@ -6,6 +6,17 @@ export { categories } from './categories.js';
 const hasTimezone = (value) => /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/.test(value);
 const invalid = (message) => Object.assign(new Error(message), { status: 400 });
 
+// 안내문 날짜 표기가 월·일을 실제로 담고 있는지 본다(예: 11.7(토), 10월 9일, 2026-10-09). "2일간", "추후 공지"는 날짜가 아니다.
+const hasCalendarDate = (text) => /(?<!\d)\d{1,2}\s*월\s*\d{1,2}|(?<!\d)\d{1,2}\s*[./-]\s*\d{1,2}(?!\d)|\d{4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}/.test(text);
+
+// "서울 건국대학교, 대전 KT인재개발원"처럼 장소 여러 곳이 한 줄로 합쳐진 항목은 장소마다 후보로 나눈다.
+// 층·호수 같은 세부 위치(코엑스, 3층 A홀)는 나누지 않도록 각 조각이 충분히 길고 숫자로 시작하지 않을 때만 쪼갠다.
+function splitVenues(session) {
+  const parts = session.venue.split(/\s*[,、/]\s*|\s+(?:및|또는|그리고)\s+/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2 || parts.length > 6 || parts.some((part) => part.length < 3 || /^\d/.test(part))) return [session];
+  return parts.map((venue) => ({ ...session, venue, label: session.label || venue }));
+}
+
 // 같은 장소에서 시간이 이어지거나 겹치는 항목은 한 행사의 식순이므로 하나의 세션으로 합친다.
 function mergeContiguousSessions(items) {
   const merged = [];
@@ -32,13 +43,16 @@ export function cleanExtraction(raw) {
       startsAt: String(item.starts_at || '').trim(),
       endsAt: String(item.ends_at || '').trim(),
       venue: String(item.venue || '').trim().slice(0, 160),
+      dateText: typeof item.date_text === 'string' ? item.date_text.trim() : null,
     }))
+    // 안내문에 날짜가 적혀 있지 않은데 AI가 채운 일정은 버려 사용자가 직접 고르게 한다.
+    .filter((item) => item.dateText === null || hasCalendarDate(item.dateText))
     .filter((item) => {
       const start = Date.parse(item.startsAt);
       const end = Date.parse(item.endsAt);
       return hasTimezone(item.startsAt) && hasTimezone(item.endsAt) && Number.isFinite(start) && Number.isFinite(end) && end > start && item.venue;
     });
-  const sessions = mergeContiguousSessions(rawSessions);
+  const sessions = mergeContiguousSessions(rawSessions.flatMap(splitVenues));
   const classification = classifyEvent({ ...raw, title, category, tags });
   return {
     id: randomUUID(), title, category, tags, ...classification,

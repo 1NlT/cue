@@ -57,3 +57,21 @@ test('back-to-back programs at one venue become a single session', () => {
   assert.equal(event.sessions[0].endsAt, '2023-06-01T21:50:00+09:00');
   assert.equal(event.sessions[0].label, '');
 });
+
+test('venues merged into one line become separate choices, but detailed locations stay whole', () => {
+  const session = (venue) => ({ label: '', starts_at: '2026-11-07T10:00:00+09:00', ends_at: '2026-11-07T17:30:00+09:00', venue });
+  const build = (venue) => cleanExtraction({ is_event: true, title: '메이커톤', category: '교육', description: '', sessions: [session(venue)] }).sessions;
+  const split = build('서울 건국대학교, 대전 KT인재개발원');
+  assert.deepEqual(split.map((item) => item.venue), ['서울 건국대학교', '대전 KT인재개발원']);
+  assert.deepEqual(build('서울 건국대학교 및 대전 KT인재개발원 ').map((item) => item.venue), ['서울 건국대학교', '대전 KT인재개발원']);
+  assert.equal(build('서울 코엑스, 3층 A홀').length, 1);
+  assert.equal(build('서울 예술의전당 콘서트홀').length, 1);
+});
+
+test('sessions whose date is not printed on the flyer are dropped so the user picks it', () => {
+  const session = (dateText, day) => ({ label: '', starts_at: `2026-11-0${day}T10:00:00+09:00`, ends_at: `2026-11-0${day}T12:00:00+09:00`, venue: '서울', date_text: dateText });
+  const event = cleanExtraction({ is_event: true, title: '캠프', category: '교육', description: '',
+    sessions: [session('11.7(토)', 7), session('', 8), session('   ', 9), session('2일간 진행', 6), session('추후 공지', 5), session('2026년 10월 9일', 4)] });
+  assert.deepEqual(event.sessions.map((item) => item.startsAt), ['2026-11-04T10:00:00+09:00', '2026-11-07T10:00:00+09:00']);
+  assert.equal(cleanExtraction({ is_event: true, title: '캠프', category: '교육', description: '', sessions: [session('', 8)] }).needsManualDetails, true);
+});

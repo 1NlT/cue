@@ -167,7 +167,8 @@ const sessionSchema = {
   properties: {
     label: { type: 'string' }, starts_at: { type: 'string' },
     ends_at: { type: 'string' }, venue: { type: 'string' },
-  }, required: ['label', 'starts_at', 'ends_at', 'venue'],
+    date_text: { type: 'string' },
+  }, required: ['label', 'starts_at', 'ends_at', 'venue', 'date_text'],
 };
 const extractionSchema = {
   type: 'object', additionalProperties: false,
@@ -369,7 +370,7 @@ export const server = http.createServer(async (req, res) => {
       const duration = [60, 120, 180].includes(Number(body.defaultDurationMinutes))
         ? Number(body.defaultDurationMinutes) : 120;
       const extracted = await askOpenAI(sourceParts,
-        `행사 정보를 한국어로 추출. 현재 시각 ${new Date().toISOString()}, 사용자 UTC 오프셋 ${offset}분. format은 행사 형식, domains는 실제 주제 분야, tags는 세부 키워드로 분리. AI·교육 정책 토론회는 토론회 형식과 AI·교육·정책 분야이고 미술 전시가 아님. 행사 주제 키워드는 tags에 최대 8개. 신청 마감일과 참가비가 명시되지 않았다면 빈 문자열로 반환하고 만들지 말 것. sessions 규칙: 사용자가 그중 하나를 골라 참석·방문할 수 있는 후보를 빠짐없이 모두 나열하세요. (1) 날짜가 다른 회차·공연·일차, (2) 같은 날이라도 시간이 떨어진 회차(오전반/오후반 등), (3) 장소가 다른 회차나 동시 개최 장소는 각각 별도 세션입니다. 여러 날에 걸쳐 매일 같은 시간에 운영되는 기간형 행사는 날짜마다 별도 세션으로 나누되 현재 이후 날짜만 최대 12개까지 만드세요. 반대로 한 회차 안의 식순·프로그램·출연 순서(예: 서막공연, 개막식, 축하공연)처럼 같은 날 같은 장소에서 이어지는 항목은 별도 세션이 아니라 하나의 세션으로 합쳐 시작은 첫 순서 시작 시각, 종료는 마지막 순서 종료 시각으로 하세요. 각 세션의 label에는 서울·부산, 2일차, 오전반처럼 후보를 구분하는 짧은 이름을 쓰고 후보가 하나뿐이면 빈 문자열로 하세요. 날짜나 장소를 알 수 없는 후보만 제외하세요. 식순 요약은 description에 쓰세요. title은 행사 전체 이름이며 개별 프로그램 이름이 아님. 시작/종료는 ISO 8601 오프셋 포함. 종료 시간이 없으면 시작+${duration}분. 연도가 불명확하면 현재 이후 가장 가까운 연도만 추론. 모든 후보의 날짜 또는 장소를 알 수 없는 경우 sessions는 빈 배열. 입력에 없는 제목은 만들지 말 것.`,
+        `행사 정보를 한국어로 추출. 현재 시각 ${new Date().toISOString()}, 사용자 UTC 오프셋 ${offset}분. format은 행사 형식, domains는 실제 주제 분야, tags는 세부 키워드로 분리. AI·교육 정책 토론회는 토론회 형식과 AI·교육·정책 분야이고 미술 전시가 아님. 행사 주제 키워드는 tags에 최대 8개. 신청 마감일과 참가비가 명시되지 않았다면 빈 문자열로 반환하고 만들지 말 것. sessions 규칙: 사용자가 그중 하나를 골라 참석·방문할 수 있는 후보를 빠짐없이 모두 나열하세요. (1) 날짜가 다른 회차·공연·일차, (2) 같은 날이라도 시간이 떨어진 회차(오전반/오후반 등), (3) 장소가 다른 회차나 동시 개최 장소는 각각 별도 세션입니다. 여러 날에 걸쳐 매일 같은 시간에 운영되는 기간형 행사는 날짜마다 별도 세션으로 나누되 현재 이후 날짜만 최대 12개까지 만드세요. 반대로 한 회차 안의 식순·프로그램·출연 순서(예: 서막공연, 개막식, 축하공연)처럼 같은 날 같은 장소에서 이어지는 항목은 별도 세션이 아니라 하나의 세션으로 합쳐 시작은 첫 순서 시작 시각, 종료는 마지막 순서 종료 시각으로 하세요. 각 세션의 date_text에는 안내문에 실제로 적힌 날짜 표기를 그대로 옮겨 쓰고(예: 11.7(토), 2026년 10월 9일), 안내문에 날짜가 없으면 빈 문자열로 하세요. 안내문에 없는 날짜를 오늘·내일 등 현재 날짜로 추측해 채우지 마세요. 각 세션의 label에는 서울·부산, 2일차, 오전반처럼 후보를 구분하는 짧은 이름을 쓰고 후보가 하나뿐이면 빈 문자열로 하세요. 날짜나 장소를 알 수 없는 후보만 제외하세요. 식순 요약은 description에 쓰세요. title은 행사 전체 이름이며 개별 프로그램 이름이 아님. 시작/종료는 ISO 8601 오프셋 포함. 종료 시간이 없으면 시작+${duration}분. 연도가 불명확하면 현재 이후 가장 가까운 연도만 추론. 모든 후보의 날짜 또는 장소를 알 수 없는 경우 sessions는 빈 배열. 입력에 없는 제목은 만들지 말 것.`,
         extractionSchema, 'event_details');
       const event = cleanExtraction(extracted);
       if (!event) return send(res, 200, { status: 'not_event' });
