@@ -262,8 +262,12 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
           (prefs.getStringList('pending_event_deletions') ?? [])..remove(id),
         );
       }
-      final me = await api.get('/v1/me');
-      final recs = await api.get('/v1/recommendations');
+      final responses = await Future.wait([
+        api.get('/v1/me'),
+        api.get('/v1/recommendations'),
+      ]);
+      final me = responses[0];
+      final recs = responses[1];
       if (!mounted) return;
       setState(() {
         final profile = me['profile'] as Map<String, dynamic>? ?? {};

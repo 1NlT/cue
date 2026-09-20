@@ -74,6 +74,7 @@ class CueApi {
   CueApi(this.baseUrl);
   final String baseUrl;
   String? _token;
+  bool _ready = false;
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
@@ -82,6 +83,8 @@ class CueApi {
       if (auth.currentSession == null) await auth.signInAnonymously();
       _token = auth.currentSession?.accessToken;
       if (_token == null) throw const CueApiException('익명 사용자 연결에 실패했습니다.');
+      // 첫 초기화 뒤에는 최신 토큰만 반영하고 계정 이전·연결 확인은 반복하지 않는다.
+      if (_ready) return;
       final legacyToken = prefs.getString('cue_session_token');
       if (legacyToken != null) {
         try {
@@ -94,6 +97,7 @@ class CueApi {
         await prefs.remove('cue_session_token');
       }
       await get('/v1/me');
+      _ready = true;
       return;
     }
     _token = prefs.getString('cue_session_token');

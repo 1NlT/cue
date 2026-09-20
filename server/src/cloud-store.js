@@ -126,20 +126,29 @@ export class CloudStore {
     } else if (!previous.personalizationEnabled) await this.recomputeInterests();
   }
 
+  // 행사 여러 개를 요청 한 번(또는 100개 단위 묶음)으로 읽는다.
+  async eventsByIds(ids) {
+    const unique = [...new Set(ids)];
+    const chunks = [];
+    for (let i = 0; i < unique.length; i += 100) chunks.push(unique.slice(i, i + 100));
+    const pages = await Promise.all(chunks.map((chunk) => this.rows('events', { id: `in.(${chunk.join(',')})` })));
+    return new Map(pages.flat().map((row) => [row.id, row]));
+  }
   async saved() {
     const links = await this.rows('user_events', { user_id: eq(this.userId), status: 'in.(saved,completed)', order: 'created_at.asc' });
-    const events = await Promise.all(links.map(async (link) => {
-      const row = await this.one('events', { id: eq(link.event_id) });
-      return row && eventFromRow(row, link);
-    }));
-    return events.filter(Boolean);
+    const events = await this.eventsByIds(links.map((link) => link.event_id));
+    return links.flatMap((link) => events.has(link.event_id) ? [eventFromRow(events.get(link.event_id), link)] : []);
   }
+  // 백그라운드 재계산이 끝난 뒤의 관심도를 읽도록 기다린다.
+  async settled() { await recomputeQueues.get(this.userId); }
   async interests() {
+    await this.settled();
     return (await this.rows('interest_profiles', { user_id: eq(this.userId), order: 'score.desc' }))
       .map((row) => ({ interestKey: row.interest_key, score: row.score, confidence: row.confidence,
         evidenceCount: row.evidence_count, lastUpdatedAt: row.last_updated_at }));
   }
   async memories() {
+    await this.settled();
     return (await this.rows('agent_memories', { user_id: eq(this.userId), or: `(expires_at.is.null,expires_at.gt.${now()})` }))
       .map((row) => ({ id: row.id, memoryType: row.memory_type, content: row.content,
         confidence: row.confidence, evidenceCount: row.evidence_count, expiresAt: row.expires_at }));
@@ -187,31 +196,31 @@ export class CloudStore {
     return true;
   }
   async interact(_userId, eventId, action, metadata = {}) {
-    const event = await this.eventVisible(this.userId, eventId);
+    const [event, profile] = await Promise.all([
+      this.eventVisible(this.userId, eventId), this.one('profiles', { user_id: eq(this.userId) })]);
     if (!event) return false;
-    const profile = await this.one('profiles', { user_id: eq(this.userId) });
+    const work = [];
     if (profile?.personalization_enabled) {
-      await this.insert('event_interactions', [{ id: randomUUID(), user_id: this.userId,
-        event_id: eventId, action, metadata }]);
-      await this.recomputeInterests();
+      // 기록만 저장하고 응답한다. 관심도 재계산은 뒤에서 하며 읽기 쪽이 끝나길 기다린다.
+      work.push(this.insert('event_interactions', [{ id: randomUUID(), user_id: this.userId,
+        event_id: eventId, action, metadata }]).then(() => {
+        this.recomputeInterests().catch((error) => console.error('Interest recompute:', error instanceof Error ? error.message : error));
+      }));
     }
     if (['interested', 'not_interested', 'recommendation_opened'].includes(action)) {
       const status = action === 'not_interested' ? 'dismissed' : action === 'interested' ? 'interested' : 'viewed';
-      await this.insert('user_events', [{ user_id: this.userId, event_id: eventId,
-        status, origin: 'recommendation', updated_at: now() }], 'user_id,event_id');
       const field = action === 'not_interested' ? 'dismissed_at' : action === 'interested' ? 'accepted_at' : 'opened_at';
-      await this.patch('recommendations', { user_id: eq(this.userId), event_id: eq(eventId) }, { [field]: now() });
+      work.push(this.insert('user_events', [{ user_id: this.userId, event_id: eventId,
+        status, origin: 'recommendation', updated_at: now() }], 'user_id,event_id'));
+      work.push(this.patch('recommendations', { user_id: eq(this.userId), event_id: eq(eventId) }, { [field]: now() }));
     }
+    await Promise.all(work);
     return true;
   }
   recomputeInterests() { return serialized(this.userId, () => this.computeInterests()); }
   async computeInterests() {
     const rows = await this.rows('event_interactions', { user_id: eq(this.userId) });
-    const events = new Map();
-    for (const id of new Set(rows.map((row) => row.event_id))) {
-      const event = await this.eventVisible(this.userId, id);
-      if (event) events.set(id, event);
-    }
+    const events = await this.eventsByIds(rows.map((row) => row.event_id));
     const scores = interestSignals(rows.map((row) => ({ ...row,
       ...events.get(row.event_id), metadata: row.metadata,
     })));
@@ -227,30 +236,38 @@ export class CloudStore {
         confidence: memory.confidence, evidence_count: value.count,
         expires_at: new Date(Date.now() + 90 * 86400000).toISOString() });
     }
-    await this.remove('interest_profiles', { user_id: eq(this.userId) });
-    await this.remove('agent_memories', { user_id: eq(this.userId) });
-    await this.insert('interest_profiles', interests, 'user_id,interest_key');
-    await this.insert('agent_memories', memories, 'user_id,memory_type,interest_key');
+    await Promise.all([this.remove('interest_profiles', { user_id: eq(this.userId) }),
+      this.remove('agent_memories', { user_id: eq(this.userId) })]);
+    await Promise.all([this.insert('interest_profiles', interests, 'user_id,interest_key'),
+      this.insert('agent_memories', memories, 'user_id,memory_type,interest_key')]);
   }
   async recommendations() {
-    const profile = await this.one('profiles', { user_id: eq(this.userId) });
+    await this.settled();
+    // 서로 독립적인 조회는 한꺼번에 보낸다. 카탈로그는 아직 끝나지 않은 행사만 읽는다.
+    const [profile, firstInterests, links, catalogRows, saved] = await Promise.all([
+      this.one('profiles', { user_id: eq(this.userId) }),
+      this.interests(),
+      this.rows('user_events', { user_id: eq(this.userId) }),
+      this.rows('events', { source_type: 'eq.catalog', end_at: `gt.${now()}` }),
+      this.saved(),
+    ]);
     if (!profile?.personalization_enabled || !profile.recommendation_enabled) return [];
-    let interestRows = await this.interests();
+    let interestRows = firstInterests;
     if (!interestRows.some((row) => row.interestKey.startsWith('domain:')) &&
         (await this.rows('event_interactions', { user_id: eq(this.userId), action: 'eq.saved' })).length) {
       await this.recomputeInterests();
       interestRows = await this.interests();
     }
     const interests = new Map(interestRows.map((row) => [row.interestKey, row.score]));
-    const links = await this.rows('user_events', { user_id: eq(this.userId) });
     const excluded = new Set(links.filter((row) => ['saved', 'planned', 'completed', 'dismissed', 'unsaved'].includes(row.status))
       .map((row) => row.event_id));
-    const catalog = (await this.rows('events', { source_type: 'eq.catalog' })).map((row) => eventFromRow(row));
-    const results = rankRecommendations({ catalog, saved: await this.saved(), interests, excluded, explore: exploreEnabled() });
-    await this.insert('recommendations', results.map((event) => ({
+    const catalog = catalogRows.map((row) => eventFromRow(row));
+    const results = rankRecommendations({ catalog, saved, interests, excluded, explore: exploreEnabled() });
+    // 추천 기록 저장은 응답을 막지 않는다.
+    this.insert('recommendations', results.map((event) => ({
       user_id: this.userId, event_id: event.id,
       recommendation_score: event.score, reason: event.reason,
-    })), 'user_id,event_id');
+    })), 'user_id,event_id').catch(() => {});
     return results;
   }
   async createGoal(_userId, eventId, title) {

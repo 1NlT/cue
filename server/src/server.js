@@ -56,7 +56,7 @@ async function discoverFor(data, userId) {
 let demoSeeding = null;
 async function seedDemoCatalog(data) {
   const upcoming = (data === store ? store.catalog()
-    : (await data.rows('events', { source_type: 'eq.catalog' })).map((row) => ({ ...row, endsAt: row.end_at })))
+    : (await data.rows('events', { source_type: 'eq.catalog', end_at: `gt.${new Date().toISOString()}` })).map((row) => ({ ...row, endsAt: row.end_at })))
     .filter((event) => Date.parse(event.endsAt) > Date.now() && isDemoEvent(event));
   if (upcoming.length >= 8) return false;
   const known = new Set(upcoming.map((event) => event.title));
@@ -65,10 +65,14 @@ async function seedDemoCatalog(data) {
   else store.importCatalog(events);
   return true;
 }
+let demoCheckedAt = 0;
 const ensureDemoCatalog = (data) => {
-  demoSeeding ||= seedDemoCatalog(data).finally(() => { demoSeeding = null; });
+  if (Date.now() - demoCheckedAt < 10 * 60 * 1000) return Promise.resolve(false);
+  demoSeeding ||= seedDemoCatalog(data).then((seeded) => { demoCheckedAt = Date.now(); return seeded; })
+    .finally(() => { demoSeeding = null; });
   return demoSeeding;
 };
+const backgroundDiscoveryAt = new Map();
 
 function send(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -89,10 +93,16 @@ async function readJson(req, maxBytes = 8 * 1024 * 1024) {
 }
 
 function hash(value) { return createHash('sha256').update(value).digest('hex'); }
+// 같은 토큰으로 반복되는 Supabase 인증 확인을 잠깐 재사용한다. 실패 결과는 저장하지 않는다.
+const authCache = new Map();
+const authCacheMs = 60 * 1000;
 async function userFor(req) {
   const token = String(req.headers.authorization || '').replace(/^Bearer /, '');
   if (process.env.CUE_CLOUD_REQUIRED !== '1' && /^[a-f0-9]{64}$/.test(token)) return store.userByTokenHash(hash(token));
   if (!supabaseUrl || !supabasePublishableKey || !token || token.length > 4096) return null;
+  const cacheKey = hash(token);
+  const cached = authCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) return cached.user;
   try {
     const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/auth/v1/user`, {
       headers: { apikey: supabasePublishableKey, authorization: `Bearer ${token}` },
@@ -102,7 +112,10 @@ async function userFor(req) {
     const profile = await response.json();
     if (!/^[0-9a-f-]{36}$/i.test(profile.id || '')) return null;
     store.ensureSupabaseUser(profile.id);
-    return { id: profile.id, supabase: true, token };
+    const user = { id: profile.id, supabase: true, token };
+    if (authCache.size >= 500) authCache.clear();
+    authCache.set(cacheKey, { user, expires: Date.now() + authCacheMs });
+    return user;
   } catch { return null; }
 }
 
@@ -246,11 +259,9 @@ export const server = http.createServer(async (req, res) => {
     const data = user.supabase ? new CloudStore(user) : store;
     if (user.supabase) await data.migrateLocal(store);
     if (req.method === 'GET' && route === '/v1/me') {
-      const profile = user.supabase ? await cloudProfile(user) : store.profile(user.id);
-      return send(res, 200, {
-        userId: user.id, cloudConnected: !!user.supabase,
-        profile, saved: await data.saved(user.id), interests: await data.interests(user.id),
-      });
+      const [profile, saved, interests] = await Promise.all([
+        user.supabase ? cloudProfile(user) : store.profile(user.id), data.saved(user.id), data.interests(user.id)]);
+      return send(res, 200, { userId: user.id, cloudConnected: !!user.supabase, profile, saved, interests });
     }
     if (req.method === 'PATCH' && route === '/v1/profile') {
       const body = await readJson(req, 4096);
@@ -270,16 +281,19 @@ export const server = http.createServer(async (req, res) => {
       return send(res, 200, { profile });
     }
     if (req.method === 'GET' && route === '/v1/recommendations') {
-      let events = await data.recommendations(user.id);
-      if (process.env.CUE_DEMO_MODE === '1') {
-        try {
-          if (await ensureDemoCatalog(data)) events = await data.recommendations(user.id);
-          else if (!events.length) events = await data.recommendations(user.id);
-        } catch (error) {
+      const demo = process.env.CUE_DEMO_MODE === '1';
+      if (demo) {
+        try { await ensureDemoCatalog(data); } catch (error) {
           console.error('Demo catalog:', error instanceof Error ? error.message : error);
         }
+      }
+      let events = await data.recommendations(user.id);
+      if (demo) {
         // 실시간 웹 검색은 느리고 불안정하므로 응답을 막지 않고 백그라운드에서 카탈로그만 보강한다.
-        if (user.supabase) discoverFor(data, user.id).catch(() => {});
+        if (user.supabase && Date.now() - (backgroundDiscoveryAt.get(user.id) || 0) > 15 * 60 * 1000) {
+          backgroundDiscoveryAt.set(user.id, Date.now());
+          discoverFor(data, user.id).catch(() => {});
+        }
         return send(res, 200, { events });
       }
       if (!events.length && user.supabase) {
