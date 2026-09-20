@@ -6,13 +6,26 @@ export { categories } from './categories.js';
 const hasTimezone = (value) => /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)$/.test(value);
 const invalid = (message) => Object.assign(new Error(message), { status: 400 });
 
+// 같은 장소에서 시간이 이어지거나 겹치는 항목은 한 행사의 식순이므로 하나의 세션으로 합친다.
+function mergeContiguousSessions(items) {
+  const merged = [];
+  for (const item of [...items].sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))) {
+    const last = merged[merged.length - 1];
+    if (last && last.venue === item.venue && Date.parse(item.startsAt) <= Date.parse(last.endsAt)) {
+      if (Date.parse(item.endsAt) > Date.parse(last.endsAt)) last.endsAt = item.endsAt;
+      last.label = '';
+    } else merged.push({ ...item });
+  }
+  return merged;
+}
+
 export function cleanExtraction(raw) {
   if (!raw || raw.is_event !== true) return null;
   const title = String(raw.title || '').trim().slice(0, 120);
   const category = categories.includes(raw.category) ? raw.category : '기타';
   const tags = (Array.isArray(raw.tags) ? raw.tags : []).filter((tag) => typeof tag === 'string')
     .map((tag) => tag.trim().slice(0, 40)).filter(Boolean).slice(0, 8);
-  const sessions = (Array.isArray(raw.sessions) ? raw.sessions : [])
+  const rawSessions = (Array.isArray(raw.sessions) ? raw.sessions : [])
     .slice(0, 12)
     .map((item) => ({
       label: String(item.label || '').trim().slice(0, 80),
@@ -25,6 +38,7 @@ export function cleanExtraction(raw) {
       const end = Date.parse(item.endsAt);
       return hasTimezone(item.startsAt) && hasTimezone(item.endsAt) && Number.isFinite(start) && Number.isFinite(end) && end > start && item.venue;
     });
+  const sessions = mergeContiguousSessions(rawSessions);
   const classification = classifyEvent({ ...raw, title, category, tags });
   return {
     id: randomUUID(), title, category, tags, ...classification,

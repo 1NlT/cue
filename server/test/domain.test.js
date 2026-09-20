@@ -42,3 +42,18 @@ test('recommendations require a saved interest and a future matching event', () 
 test('saved events require an ordered time and a location', () => {
   assert.throws(() => validateSavedEvent({ title: '행사', venue: '', startsAt: '2027-01-01T10:00:00Z', endsAt: '2027-01-01T09:00:00Z' }));
 });
+
+test('back-to-back programs at one venue become a single session', () => {
+  const at = (from, to) => ({ label: '', starts_at: `2023-06-01T${from}:00+09:00`, ends_at: `2023-06-01T${to}:00+09:00`, venue: '태화강국가정원 남구둔치' });
+  const event = cleanExtraction({
+    is_event: true, title: '2023 울산공업축제', category: '음악 페스티벌', description: '',
+    sessions: [
+      { ...at('19:30', '20:00'), label: '서막공연' }, { ...at('20:00', '20:20'), label: '개막식' },
+      { ...at('20:20', '20:40'), label: '주제공연' }, { ...at('20:40', '21:50'), label: '축하공연' },
+    ],
+  });
+  assert.equal(event.sessions.length, 1);
+  assert.equal(event.sessions[0].startsAt, '2023-06-01T19:30:00+09:00');
+  assert.equal(event.sessions[0].endsAt, '2023-06-01T21:50:00+09:00');
+  assert.equal(event.sessions[0].label, '');
+});
