@@ -143,6 +143,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
   int? selectedSession;
   String? pastEventTitle;
   String? pastEventEndedAt;
+  Set<String> interestedIds = {};
   DateTime? startsAt;
   DateTime? endsAt;
   int reminderMinutes = 60;
@@ -228,6 +229,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
     };
     defaultReminderMinutes = prefs.getInt('default_reminder_minutes') ?? 60;
     onboardingCompleted = prefs.getBool('cue_onboarding_completed') ?? false;
+    interestedIds = (prefs.getStringList('interested_events') ?? []).toSet();
     reminderMinutes = defaultReminderMinutes;
     defaultDurationMinutes = prefs.getInt('default_duration_minutes') ?? 120;
     preferredCalendarId = prefs.getString('preferred_calendar_id');
@@ -1887,11 +1889,21 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
             Wrap(
               spacing: 6,
               children: [
-                OutlinedButton.icon(
-                  onPressed: () => _feedback(event, 'interested'),
-                  icon: Icon(Icons.favorite_border),
-                  label: Text('관심 있음'),
-                ),
+                interestedIds.contains(event['id'])
+                    ? FilledButton.icon(
+                        onPressed: () => _message('이미 관심 표시한 행사예요.'),
+                        icon: Icon(Icons.favorite),
+                        label: Text('관심 있음'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Color(0xFFE5484D),
+                          foregroundColor: Colors.white,
+                        ),
+                      )
+                    : OutlinedButton.icon(
+                        onPressed: () => _feedback(event, 'interested'),
+                        icon: Icon(Icons.favorite_border),
+                        label: Text('관심 있음'),
+                      ),
                 TextButton.icon(
                   onPressed: () => _dismissRecommendation(event),
                   icon: Icon(Icons.not_interested_outlined),
@@ -1920,15 +1932,25 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
   }
 
   Future<void> _feedback(Map<String, dynamic> event, String action) async {
+    final id = event['id'] as String?;
+    final interested = action == 'interested' && id != null;
+    if (interested) setState(() => interestedIds = {...interestedIds, id});
     try {
       await api.post('/v1/interactions', {
         'eventId': event['id'],
         'action': action,
       });
-      await _refresh();
+      if (interested) {
+        await (await SharedPreferences.getInstance())
+            .setStringList('interested_events', interestedIds.toList());
+      }
       _message(action == 'interested' ? '관심 표시했어요.' : '추천에 반영했어요.');
+      unawaited(_refresh());
     } catch (error) {
-      _message(error.toString());
+      if (interested && mounted) {
+        setState(() => interestedIds = {...interestedIds}..remove(id));
+      }
+      _message('저장하지 못했어요. 잠시 후 다시 시도해 주세요.');
     }
   }
 
@@ -1950,7 +1972,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
       });
       await _refresh();
       _message('추천에서 제외했어요.');
-    } catch (error) { _message(error.toString()); }
+    } catch (error) { _message('저장하지 못했어요. 잠시 후 다시 시도해 주세요.'); }
   }
 
   Future<void> _planRecommendation(Map<String, dynamic> event) async {
