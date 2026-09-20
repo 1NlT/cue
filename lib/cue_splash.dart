@@ -41,7 +41,7 @@ class CueSplash extends StatelessWidget {
               color: blue,
             )),
             const SizedBox(height: 12),
-            Text('카메라를 준비하는 중', style: TextStyle(fontSize: 12, color: dark ? const Color(0xFFA8C6D9) : const Color(0xFF6685A0))),
+            Text('Cue를 여는 중', style: TextStyle(fontSize: 12, color: dark ? const Color(0xFFA8C6D9) : const Color(0xFF6685A0))),
           ]),
         ),
       ),
