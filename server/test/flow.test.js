@@ -7,6 +7,7 @@ import path from 'node:path';
 test('analysis stops after rejection and approved interests drive recommendations', async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cue-test-'));
   process.env.CUE_TEST_MODE = '1';
+  process.env.CUE_DEMO_MODE = '0';
   process.env.CUE_DATA_FILE = path.join(directory, 'data.json');
   process.env.CUE_DB_FILE = path.join(directory, 'data.sqlite');
   process.env.SUPABASE_URL = '';

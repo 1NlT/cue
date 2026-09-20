@@ -9,6 +9,7 @@ import { discoverEvents, discoveryTopic, discoverySubject } from './discovery.js
 import { categoryGroup } from './categories.js';
 import { discoverSemaExhibitions } from './sema.js';
 import { formats, domains } from './classification.js';
+import { demoEvents, isDemoEvent } from './demo-catalog.js';
 
 const port = Number(process.env.PORT || 8787);
 const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
@@ -50,6 +51,24 @@ async function discoverFor(data, userId) {
   await promise;
   return true;
 }
+
+// CUE_DEMO_MODE=1: 시연용 예시 행사를 카탈로그에 채워 두고, 검색 결과가 없어도 추천이 비지 않게 한다.
+let demoSeeding = null;
+async function seedDemoCatalog(data) {
+  const upcoming = (data === store ? store.catalog()
+    : (await data.rows('events', { source_type: 'eq.catalog' })).map((row) => ({ ...row, endsAt: row.end_at })))
+    .filter((event) => Date.parse(event.endsAt) > Date.now() && isDemoEvent(event));
+  if (upcoming.length >= 8) return false;
+  const known = new Set(upcoming.map((event) => event.title));
+  const events = demoEvents().filter((event) => !known.has(event.title));
+  if (data !== store) await importCloudCatalog(events);
+  else store.importCatalog(events);
+  return true;
+}
+const ensureDemoCatalog = (data) => {
+  demoSeeding ||= seedDemoCatalog(data).finally(() => { demoSeeding = null; });
+  return demoSeeding;
+};
 
 function send(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -252,6 +271,17 @@ export const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && route === '/v1/recommendations') {
       let events = await data.recommendations(user.id);
+      if (process.env.CUE_DEMO_MODE === '1') {
+        try {
+          if (await ensureDemoCatalog(data)) events = await data.recommendations(user.id);
+          else if (!events.length) events = await data.recommendations(user.id);
+        } catch (error) {
+          console.error('Demo catalog:', error instanceof Error ? error.message : error);
+        }
+        // 실시간 웹 검색은 느리고 불안정하므로 응답을 막지 않고 백그라운드에서 카탈로그만 보강한다.
+        if (user.supabase) discoverFor(data, user.id).catch(() => {});
+        return send(res, 200, { events });
+      }
       if (!events.length && user.supabase) {
         try {
           await discoverFor(data, user.id);

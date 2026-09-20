@@ -73,3 +73,15 @@ test('logistical dismissal does not lower domain interest', () => {
   rows[1].metadata.reason = '관심 없는 분야';
   assert.equal(interestSignals(rows, Date.parse(timestamp)).get('domain:AI').score, 1);
 });
+
+test('related technology is recommended but unrelated art is excluded', () => {
+  const currentTime = Date.parse('2027-01-01T00:00:00Z');
+  const base = { startsAt: '2027-02-01T10:00:00Z', endsAt: '2027-02-01T12:00:00Z' };
+  const results = rankRecommendations({
+    catalog: [
+      { ...base, id: 'science', title: '과학 연구 세미나', domains: ['과학'] },
+      { ...base, id: 'art', title: '미술 개인전', domains: ['미술'] },
+    ], saved: [], interests: new Map([['domain:AI', 4]]), excluded: new Set(), currentTime,
+  });
+  assert.deepEqual(results.map((event) => event.id), ['science']);
+});

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { interestSignals, memoryFromSignal, rankRecommendations } from './personalization.js';
+import { exploreEnabled, interestSignals, memoryFromSignal, rankRecommendations } from './personalization.js';
 import { classifyEvent } from './classification.js';
 
 const tables = new Set([
@@ -237,7 +237,7 @@ export class CloudStore {
     const excluded = new Set(links.filter((row) => ['saved', 'planned', 'completed', 'dismissed', 'unsaved'].includes(row.status))
       .map((row) => row.event_id));
     const catalog = (await this.rows('events', { source_type: 'eq.catalog' })).map((row) => eventFromRow(row));
-    const results = rankRecommendations({ catalog, saved: await this.saved(), interests, excluded });
+    const results = rankRecommendations({ catalog, saved: await this.saved(), interests, excluded, explore: exploreEnabled() });
     await this.insert('recommendations', results.map((event) => ({
       user_id: this.userId, event_id: event.id,
       recommendation_score: event.score, reason: event.reason,

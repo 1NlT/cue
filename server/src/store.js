@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { interestSignals, memoryFromSignal, rankRecommendations } from './personalization.js';
+import { exploreEnabled, interestSignals, memoryFromSignal, rankRecommendations } from './personalization.js';
 import { classifyEvent } from './classification.js';
 
 const databasePath = path.resolve(process.env.CUE_DB_FILE || 'data/cue.sqlite');
@@ -267,7 +267,7 @@ export const store = {
       this.recomputeInterests(userId);
     const interests = new Map(this.interests(userId).map((item) => [item.interestKey,item.score]));
     const excluded = new Set(db.prepare("SELECT event_id FROM user_events WHERE user_id=? AND status IN ('saved','planned','completed','dismissed','unsaved')").all(userId).map((item) => item.event_id));
-    const results = rankRecommendations({ catalog: this.catalog(), saved: this.saved(userId), interests, excluded });
+    const results = rankRecommendations({ catalog: this.catalog(), saved: this.saved(userId), interests, excluded, explore: exploreEnabled() });
     for (const event of results) {
       db.prepare(`INSERT INTO recommendations(id,user_id,event_id,recommendation_score,reason,created_at) VALUES(?,?,?,?,?,?)
         ON CONFLICT(user_id,event_id) DO UPDATE SET recommendation_score=excluded.recommendation_score,reason=excluded.reason`)

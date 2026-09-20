@@ -21,6 +21,15 @@ mv "$cue_env_tmp" .env
 chmod 600 .env
 unset cue_secret
 printf '\n키를 server/.env에 저장했습니다. 이 파일은 Git에서 제외됩니다.\n'
+if [ "${CUE_SKIP_START:-0}" = 1 ]; then
+  printf '실행 중인 서버에는 새 키가 아직 적용되지 않았습니다. 서버를 재시작해 주세요.\n'
+  exit 0
+fi
+if lsof -nP -iTCP:8788 -sTCP:LISTEN >/dev/null 2>&1; then
+  printf '8788 포트의 서버가 이미 실행 중입니다. 새 키를 적용하려면 서버를 재시작해 주세요.\n'
+  read -r -p 'Enter를 누르면 창을 닫습니다.' _
+  exit 0
+fi
 printf 'Cue 서버를 8788 포트에서 시작합니다. 앱을 사용하는 동안 이 창을 열어 두세요.\n\n'
 export PORT=8788
 exec npm start

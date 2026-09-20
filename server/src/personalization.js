@@ -10,6 +10,16 @@ const parse = (value, fallback) => { try { return typeof value === 'string' ? JS
 const normalizeTag = (tag) => String(tag).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 const aliases = { 인공지능: 'ai', 생성형ai: 'ai', 미래교육: '교육', 교육정책: '교육정책', 현대미술: '미술' };
 const tagKey = (tag) => aliases[normalizeTag(tag)] || normalizeTag(tag);
+const relatedDomains = {
+  AI: ['소프트웨어', '로봇', '과학', '교육', '정책'],
+  교육: ['AI', '정책', '과학', '소프트웨어'],
+  정책: ['교육', 'AI', '과학', '창업'],
+  소프트웨어: ['AI', '로봇', '과학', '창업'],
+  로봇: ['AI', '소프트웨어', '과학'],
+  과학: ['AI', '로봇', '소프트웨어', '교육'],
+  미술: ['디자인'], 디자인: ['미술'],
+  음악: [], 창업: ['소프트웨어', 'AI', '정책'],
+};
 
 export function interestSignals(interactions, currentTime = Date.now()) {
   const scores = new Map();
@@ -37,11 +47,15 @@ export function interestSignals(interactions, currentTime = Date.now()) {
   return scores;
 }
 
-export function rankRecommendations({ catalog, saved, interests, excluded, currentTime = Date.now() }) {
+// 시연 모드: 관심사가 없거나 맞는 행사가 적어도 다가오는 행사를 탐색용으로 채워 보여준다.
+const exploreMinimum = 6;
+export const exploreEnabled = () => process.env.CUE_DEMO_MODE === '1';
+
+export function rankRecommendations({ catalog, saved, interests, excluded, currentTime = Date.now(), explore = false }) {
   // Old profile keys can still be read until the store recomputes them.
   const positiveDomains = [...interests.entries()].filter(([key, score]) => key.startsWith('domain:') && score > 0);
   const specificInterests = positiveDomains.filter(([key]) => !['domain:문화', 'domain:기타'].includes(key));
-  return catalog
+  const ranked = catalog
     .filter((event) => Date.parse(event.endsAt) > currentTime &&
       (!event.applicationDeadline || Date.parse(event.applicationDeadline) > currentTime) &&
       !excluded.has(event.id) && !saved.some((own) => own.title === event.title) &&
@@ -51,18 +65,25 @@ export function rankRecommendations({ catalog, saved, interests, excluded, curre
       const classification = classifyEvent(event);
       const matchedDomains = classification.domains.filter((domain) => (interests.get(`domain:${domain}`) || 0) > 0 && domain !== '기타');
       const domainScore = matchedDomains.reduce((sum, domain) => sum + interests.get(`domain:${domain}`), 0);
+      const relatedScore = [...interests.entries()].filter(([key, value]) => key.startsWith('domain:') && value > 0 &&
+        relatedDomains[key.slice(7)]?.some((domain) => classification.domains.includes(domain)))
+        .reduce((sum, [, value]) => sum + value, 0);
       const tagScore = (event.tags || []).reduce((sum, tag) => sum + Math.max(0, interests.get(`tag:${tagKey(tag)}`) || 0), 0);
       // A matching format alone must never recommend an unrelated topic.
-      const eligible = matchedDomains.length > 0 && positiveDomains.length > 0 &&
-        (!specificInterests.length || matchedDomains.some((domain) => domain !== '문화'));
+      const eligible = positiveDomains.length > 0 && (matchedDomains.length > 0 || relatedScore > 0) &&
+        (!specificInterests.length || matchedDomains.some((domain) => domain !== '문화') || relatedScore > 0);
       const formatScore = Math.max(0, interests.get(`format:${classification.format}`) || 0);
-      const score = eligible ? domainScore * 4 + tagScore * 1.5 + formatScore * 0.2 : 0;
-      const reason = matchedDomains.length ? `${matchedDomains.slice(0, 2).join('·')} 주제에 보인 관심을 바탕으로 추천해요.` : '';
+      const score = eligible ? domainScore * 4 + relatedScore * 0.6 + tagScore * 1.5 + formatScore * 0.2 : 0;
+      const reason = matchedDomains.length ? `${matchedDomains.slice(0, 2).join('·')} 주제에 보인 관심을 바탕으로 추천해요.` :
+        relatedScore > 0 ? '관심 주제와 가까운 분야의 행사예요.' : '';
       return { ...event, ...classification, score, reason };
     })
-    .filter((event) => event.score > 0)
-    .sort((a, b) => b.score - a.score || Date.parse(a.startsAt) - Date.parse(b.startsAt))
-    .slice(0, 12);
+    .sort((a, b) => b.score - a.score || Date.parse(a.startsAt) - Date.parse(b.startsAt));
+  const matched = ranked.filter((event) => event.score > 0);
+  if (!explore || matched.length >= exploreMinimum) return matched.slice(0, 12);
+  const reason = positiveDomains.length ? '새로운 관심사를 발견할 수 있는 행사예요.' : '지금 인기 있는 행사예요. 저장하면 취향에 맞춰 추천해요.';
+  const filler = ranked.filter((event) => event.score <= 0).map((event) => ({ ...event, score: 0.01, reason }));
+  return [...matched, ...filler].slice(0, Math.max(exploreMinimum, matched.length));
 }
 
 export function memoryFromSignal(key, value) {
