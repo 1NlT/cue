@@ -447,7 +447,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
         WidgetsBinding.instance.addPostFrameCallback((_) => _chooseSession());
       } else if (event.sessions.isEmpty) {
         // 날짜나 장소가 분명하지 않으면 입력 후 바로 직접 고르는 시트를 띄운다.
-        WidgetsBinding.instance.addPostFrameCallback((_) => _editSchedule(ambiguous: true));
+        WidgetsBinding.instance.addPostFrameCallback((_) => _requireSchedule());
       }
     } catch (error) {
       if (mounted) {
@@ -478,8 +478,9 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
       '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 
   // 날짜가 불분명하거나 직접 고르고 싶을 때 쓰는 일정 입력 시트. 날짜·시작/종료 시간·장소를 한 곳에서 정한다.
-  Future<void> _editSchedule({bool ambiguous = false}) async {
-    if (!mounted) return;
+  // forced면 바깥을 눌러도, 아래로 밀어도, 뒤로가기로도 닫히지 않고 선택을 마치거나 분석을 취소해야만 나갈 수 있다.
+  Future<bool> _editSchedule({bool ambiguous = false, bool forced = false}) async {
+    if (!mounted) return false;
     final now = DateTime.now();
     var start = startsAt ?? DateTime(now.year, now.month, now.day + 1, 14);
     var end = endsAt ?? start.add(Duration(minutes: defaultDurationMinutes));
@@ -488,8 +489,12 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
     final result = await showModalBottomSheet<(DateTime, DateTime, String)>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) => StatefulBuilder(
+      isDismissible: !forced,
+      enableDrag: !forced,
+      showDragHandle: !forced,
+      builder: (sheetContext) => PopScope(
+        canPop: !forced,
+        child: StatefulBuilder(
         builder: (context, setSheet) {
           Future<void> pickDate() async {
             final picked = await showDatePicker(
@@ -594,6 +599,13 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
                         Navigator.pop(sheetContext, (start, end, venueField.text.trim()));
                       }
                     }),
+                    if (forced)
+                      Center(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          child: Text('취소하고 다른 안내물 선택'),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -601,16 +613,23 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
           );
         },
       ),
+      ),
     );
     venueField.dispose();
-    if (result != null && mounted) {
-      setState(() {
-        startsAt = result.$1;
-        endsAt = result.$2;
-        venueController.text = result.$3;
-        selectedSession = null;
-      });
-    }
+    if (result == null || !mounted) return false;
+    setState(() {
+      startsAt = result.$1;
+      endsAt = result.$2;
+      venueController.text = result.$3;
+      selectedSession = null;
+    });
+    return true;
+  }
+
+  // 날짜가 불분명하면 창을 강제로 띄워 선택을 받는다. 취소하면 이 안내물 분석을 접는다.
+  Future<void> _requireSchedule() async {
+    final done = await _editSchedule(ambiguous: true, forced: true);
+    if (!done && mounted) _reset();
   }
 
   Future<void> _chooseCalendar() async {
@@ -1706,8 +1725,11 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
     final picked = await showModalBottomSheet<int>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
+      isDismissible: false,
+      enableDrag: false,
+      builder: (sheetContext) => PopScope(
+        canPop: false,
+        child: SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(sheetContext).size.height * 0.75,
@@ -1753,6 +1775,10 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
                       icon: Icon(Icons.edit_calendar_outlined),
                       label: Text('여기에 없는 일정이에요 · 직접 입력'),
                     ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(sheetContext, -2),
+                      child: Text('취소하고 다른 안내물 선택'),
+                    ),
                   ],
                 ),
               ),
@@ -1760,9 +1786,13 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
           ),
         ),
       ),
+      ),
     );
-    if (picked == -1) {
-      await _editSchedule();
+    if (picked == -2) {
+      if (mounted) _reset();
+    } else if (picked == -1) {
+      // 직접 입력을 마치지 않고 나오면 다시 선택창으로 돌아온다.
+      if (!await _editSchedule(forced: true) && mounted) await _chooseSession();
     } else if (picked != null && mounted) {
       setState(() {
         selectedSession = picked;
