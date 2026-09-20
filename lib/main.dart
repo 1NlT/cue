@@ -115,6 +115,8 @@ class CueHome extends StatefulWidget {
 
 class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
   static const shareChannel = MethodChannel('cue/shared');
+  bool readyForShares = false;
+  bool takingSharedFile = false;
   bool get isDark => Theme.of(context).brightness == Brightness.dark;
   Color get ink => isDark ? Color(0xFFEDF7FF) : Color(0xFF17344E);
   Color get muted => isDark ? Color(0xFFA2BDD0) : Color(0xFF65809A);
@@ -174,7 +176,8 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
   }
 
   Future<void> _takeSharedFile() async {
-    if (!Platform.isIOS || loading) return;
+    if (!Platform.isIOS || !readyForShares || takingSharedFile) return;
+    takingSharedFile = true;
     try {
       final path = await shareChannel.invokeMethod<String>('takeSharedFile');
       if (path == null || !mounted) return;
@@ -195,6 +198,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
       });
       await _analyze();
     } catch (error) { _message('공유 파일을 열지 못했습니다: $error'); }
+    finally { takingSharedFile = false; }
   }
 
   @override
@@ -226,7 +230,11 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
     await minimum;
     if (!mounted) return;
     setState(() => loading = false);
-    unawaited(() async { await _refresh(); await _takeSharedFile(); }());
+    unawaited(() async {
+      await _refresh();
+      readyForShares = true;
+      await _takeSharedFile();
+    }());
   }
 
   Future<void> _refresh() async {
