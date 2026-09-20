@@ -143,6 +143,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
   int? selectedSession;
   String? pastEventTitle;
   String? pastEventEndedAt;
+  Map<String, dynamic>? pastSuggestion;
   Set<String> interestedIds = {};
   DateTime? startsAt;
   DateTime? endsAt;
@@ -368,6 +369,11 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
     progressTimer = Timer(Duration(seconds: 4), () {
       if (mounted && stage == ScanStage.processing) {
         setState(() => statusMessage = '행사라면 시간과 장소를 정리하는 중');
+        progressTimer = Timer(Duration(seconds: 12), () {
+          if (mounted && stage == ScanStage.processing) {
+            setState(() => statusMessage = '지난 행사라면 다음 일정을 찾는 중');
+          }
+        });
       }
     });
     try {
@@ -403,6 +409,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
           candidate = null;
           pastEventTitle = result['title'] as String?;
           pastEventEndedAt = result['endedAt'] as String?;
+          pastSuggestion = result['suggestion'] as Map<String, dynamic>?;
         });
         return;
       }
@@ -830,6 +837,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
       candidate = null;
       stage = ScanStage.idle;
       selectedSession = null;
+      pastSuggestion = null;
       startsAt = null;
       endsAt = null;
       selectedCategory = '기타';
@@ -1338,8 +1346,62 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
             ].join('\n'),
             style: TextStyle(color: muted, height: 1.5),
           ),
-          SizedBox(height: 20),
-          _button('다른 안내물 선택', Icons.refresh, _reset),
+          if (pastSuggestion != null) ...[
+            SizedBox(height: 18),
+            _suggestionCard(pastSuggestion!),
+            SizedBox(height: 12),
+            _button('이 일정으로 저장하기', Icons.event_available_outlined,
+                () => _openRecommendation(pastSuggestion!)),
+            SizedBox(height: 8),
+            _button('다른 안내물 선택', Icons.refresh, _reset, light: true),
+          ] else ...[
+            SizedBox(height: 10),
+            Text(
+              '같은 행사의 다음 일정은 아직 확인되지 않았어요.',
+              style: TextStyle(color: muted, height: 1.5),
+            ),
+            SizedBox(height: 20),
+            _button('다른 안내물 선택', Icons.refresh, _reset),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _suggestionCard(Map<String, dynamic> event) {
+    final date = DateTime.tryParse(event['startsAt'] as String? ?? '')?.toLocal();
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: mint,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.auto_awesome, size: 16, color: accent),
+            SizedBox(width: 6),
+            Text('이번엔 이 일정이 있어요',
+              style: TextStyle(color: accent, fontWeight: FontWeight.w800, fontSize: 13)),
+          ]),
+          SizedBox(height: 10),
+          Text(event['title'] as String? ?? '',
+            style: TextStyle(color: ink, fontSize: 17, fontWeight: FontWeight.w800)),
+          if (date != null) _detail(Icons.schedule, _date(date)),
+          _detail(Icons.place_outlined, event['venue'] as String? ?? ''),
+          if (event['sourceUrl'] is String)
+            TextButton.icon(
+              onPressed: () async {
+                final url = Uri.tryParse(event['sourceUrl'] as String);
+                if (url == null || !await launchUrl(url, mode: LaunchMode.externalApplication)) {
+                  _message('안내 페이지를 열 수 없습니다.');
+                }
+              },
+              icon: Icon(Icons.open_in_new, size: 18),
+              label: Text('출처 확인'),
+            ),
         ],
       ),
     );
