@@ -96,7 +96,7 @@ class CueApp extends StatelessWidget {
   );
 }
 
-enum ScanStage { idle, processing, notEvent, review, saved }
+enum ScanStage { idle, processing, notEvent, pastEvent, review, saved }
 
 class CueDocument {
   CueDocument(this.path, this.name);
@@ -141,6 +141,8 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
   CueDocument? document;
   CueEvent? candidate;
   int? selectedSession;
+  String? pastEventTitle;
+  String? pastEventEndedAt;
   DateTime? startsAt;
   DateTime? endsAt;
   int reminderMinutes = 60;
@@ -389,6 +391,15 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
         'defaultDurationMinutes': defaultDurationMinutes,
       });
       if (!mounted) return;
+      if (result['status'] == 'past_event') {
+        setState(() {
+          stage = ScanStage.pastEvent;
+          candidate = null;
+          pastEventTitle = result['title'] as String?;
+          pastEventEndedAt = result['endedAt'] as String?;
+        });
+        return;
+      }
       if (result['status'] != 'event') {
         setState(() {
           stage = ScanStage.notEvent;
@@ -984,7 +995,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
       _card(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _eyebrow('사용 방법'),
         SizedBox(height: 10),
-        _onboardingStep('1', '포스터나 공지문을 선택해요', '촬영하거나 사진·PDF·한글 파일을 열 수 있어요.'),
+        _onboardingStep('1', '포스터나 공지문을 선택해요', '촬영하거나 사진첩에서 고를 수 있어요. + 버튼으로 문서도 열 수 있어요.'),
         _onboardingStep('2', '일정 정보를 자동으로 읽어요', '시간과 장소를 확인하고 필요한 내용은 고쳐주세요.'),
         _onboardingStep('3', '캘린더에 저장해요', '저장 버튼을 누른 일정만 캘린더에 추가돼요.'),
       ])),
@@ -1084,13 +1095,14 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
       ),
       SizedBox(height: 13),
       Text(
-        '포스터나 공지문을 촬영하거나 파일로 열어주세요.\n확인한 일정만 캘린더에 저장됩니다.',
+        '포스터나 공지문을 촬영하거나 사진으로 골라주세요.\n확인한 일정만 캘린더에 저장됩니다.',
         style: TextStyle(fontSize: 15, height: 1.55, color: muted),
       ),
       SizedBox(height: 28),
       if (stage == ScanStage.idle) _captureCard(),
       if (stage == ScanStage.processing) _progressCard(),
       if (stage == ScanStage.notEvent) _notEventCard(),
+      if (stage == ScanStage.pastEvent) _pastEventCard(),
       if (stage == ScanStage.review) _reviewCard(),
       if (stage == ScanStage.saved) _savedCard(),
       SizedBox(height: 22),
@@ -1141,14 +1153,29 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
           _button('이 문서 다시 분석', Icons.refresh, _analyze, light: true),
           SizedBox(height: 18),
         ],
-        Container(
-          width: 54,
-          height: 54,
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.16),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Icon(Icons.center_focus_strong, color: Colors.white, size: 29),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Container(
+              width: 54,
+              height: 54,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(Icons.center_focus_strong, color: Colors.white, size: 29),
+            ),
+            IconButton.filled(
+              onPressed: _showMoreSources,
+              tooltip: '문서 열기',
+              icon: Icon(Icons.add),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.white.withValues(alpha: 0.16),
+                foregroundColor: Colors.white,
+                fixedSize: Size(46, 46),
+              ),
+            ),
+          ],
         ),
         SizedBox(height: 27),
         Text(
@@ -1161,7 +1188,7 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
         ),
         SizedBox(height: 7),
         Text(
-          '사진을 찍거나 PDF·한글 파일을 열 수 있어요.',
+          '사진을 찍거나 사진첩에서 골라 주세요.',
           style: TextStyle(color: Color(0xFFD9F0FF)),
         ),
         SizedBox(height: 23),
@@ -1178,16 +1205,26 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
           () => _pick(ImageSource.gallery),
           outlined: true,
         ),
-        SizedBox(height: 10),
-        _button(
-          'PDF·한글 파일 열기',
-          Icons.upload_file_outlined,
-          _pickDocument,
-          outlined: true,
-        ),
       ],
     ),
   );
+
+  Future<void> _showMoreSources() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: Icon(Icons.upload_file_outlined, color: accent),
+            title: Text('PDF·한글 파일 열기'),
+            subtitle: Text('공지문 문서에서 행사 정보를 읽어요.'),
+            onTap: () => Navigator.pop(context, 'document'),
+          ),
+        ]),
+      ),
+    );
+    if (choice == 'document') await _pickDocument();
+  }
 
   Widget _progressCard() => _card(
     Column(
@@ -1268,6 +1305,34 @@ class _CueHomeState extends State<CueHome> with WidgetsBindingObserver {
       ],
     ),
   );
+
+  Widget _pastEventCard() {
+    final ended = DateTime.tryParse(pastEventEndedAt ?? '')?.toLocal();
+    return _card(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.event_busy_outlined, color: accent, size: 35),
+          SizedBox(height: 15),
+          Text(
+            '이미 지난 행사예요',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: ink),
+          ),
+          SizedBox(height: 8),
+          Text(
+            [
+              if ((pastEventTitle ?? '').isNotEmpty) pastEventTitle!,
+              if (ended != null) '${_date(ended)}에 끝난 행사라 일정 저장을 취소했어요.'
+              else '일정이 이미 지나 저장을 취소했어요.',
+            ].join('\n'),
+            style: TextStyle(color: muted, height: 1.5),
+          ),
+          SizedBox(height: 20),
+          _button('다른 안내물 선택', Icons.refresh, _reset),
+        ],
+      ),
+    );
+  }
 
   Widget _reviewCard() {
     final event = candidate!;

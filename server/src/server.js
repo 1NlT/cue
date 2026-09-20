@@ -344,7 +344,15 @@ export const server = http.createServer(async (req, res) => {
         `행사 정보를 한국어로 추출. 현재 시각 ${new Date().toISOString()}, 사용자 UTC 오프셋 ${offset}분. format은 행사 형식, domains는 실제 주제 분야, tags는 세부 키워드로 분리. AI·교육 정책 토론회는 토론회 형식과 AI·교육·정책 분야이고 미술 전시가 아님. 행사 주제 키워드는 tags에 최대 8개. 신청 마감일과 참가비가 명시되지 않았다면 빈 문자열로 반환하고 만들지 말 것. sessions는 사용자가 골라서 참석하는 서로 다른 날짜·장소의 회차일 때만 별도 항목으로 만들고 조합이 불명확하면 만들지 말 것. 하나의 행사 안에서 같은 날 같은 장소에 이어지는 식순·프로그램·출연 순서(예: 서막공연, 개막식, 축하공연)는 별도 세션이 아니라 하나의 세션으로, 시작은 첫 순서 시작 시각, 종료는 마지막 순서 종료 시각으로 하고 label은 빈 문자열, 식순 요약은 description에 쓸 것. title은 행사 전체 이름이며 개별 프로그램 이름이 아님. 시작/종료는 ISO 8601 오프셋 포함. 종료 시간이 없으면 시작+${duration}분. 연도가 불명확하면 현재 이후 가장 가까운 연도만 추론. 날짜 또는 장소를 알 수 없는 경우 sessions는 빈 배열. 입력에 없는 제목은 만들지 말 것.`,
         extractionSchema, 'event_details');
       const event = cleanExtraction(extracted);
-      return send(res, 200, event ? { status: 'event', event } : { status: 'not_event' });
+      if (!event) return send(res, 200, { status: 'not_event' });
+      // 인식된 일정이 모두 이미 지났다면 후보를 만들지 않고 분석을 취소한다.
+      if (event.sessions.length) {
+        const upcoming = event.sessions.filter((session) => Date.parse(session.endsAt) > Date.now());
+        if (!upcoming.length) return send(res, 200, { status: 'past_event', title: event.title,
+          endedAt: event.sessions.map((session) => session.endsAt).sort().at(-1) });
+        event.sessions = upcoming;
+      }
+      return send(res, 200, { status: 'event', event });
     }
     if (req.method === 'POST' && route === '/v1/events') {
       const body = await readJson(req, 16 * 1024);

@@ -1,4 +1,5 @@
 import 'package:cue/main.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,7 +22,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1200));
     expect(find.text('포스터 촬영하기'), findsOneWidget);
     expect(find.text('사진첩에서 선택'), findsOneWidget);
+    expect(find.text('PDF·한글 파일 열기'), findsNothing);
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
     expect(find.text('PDF·한글 파일 열기'), findsOneWidget);
+    Navigator.of(tester.element(find.text('PDF·한글 파일 열기'))).pop();
+    await tester.pumpAndSettle();
     expect(find.text('사용 방법'), findsNothing);
     expect(find.text('내 일정'), findsOneWidget);
     expect(find.text('추천'), findsOneWidget);
