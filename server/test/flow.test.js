@@ -73,12 +73,10 @@ test('analysis stops after rejection and approved interests drive recommendation
       is_event: true, title: '2023 울산공업축제', category: '음악', description: '',
       sessions: [{ label: '', starts_at: '2023-06-01T19:30:00+09:00', ends_at: '2023-06-01T21:50:00+09:00', venue: '울산' }],
     });
-    answers.push({ events: [] }, { events: [] }, { events: [] });
     const past = await request('/v1/analyze', token, image);
     assert.equal(past.body.status, 'past_event');
     assert.equal(past.body.title, '2023 울산공업축제');
     assert.equal(past.body.event, undefined);
-    assert.equal(past.body.suggestion, null);
 
     const catalog = await request('/v1/catalog/import', 'test-admin-token', { events: [
       { title: '다른 음악회', venue: '인천', startsAt: '2027-02-01T18:00:00+09:00', endsAt: '2027-02-01T20:00:00+09:00', category: '음악' },

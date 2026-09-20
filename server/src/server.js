@@ -5,7 +5,7 @@ import { categories, cleanExtraction, validateSavedEvent } from './domain.js';
 import { documentInput } from './document.js';
 import { store } from './store.js';
 import { CloudStore, importCloudCatalog } from './cloud-store.js';
-import { discoverEvents, discoveryTopic, discoverySubject, findNextEdition } from './discovery.js';
+import { discoverEvents, discoveryTopic, discoverySubject } from './discovery.js';
 import { categoryGroup } from './categories.js';
 import { discoverSemaExhibitions } from './sema.js';
 import { formats, domains } from './classification.js';
@@ -377,15 +377,8 @@ export const server = http.createServer(async (req, res) => {
       // 인식된 일정이 모두 이미 지났다면 후보를 만들지 않고 분석을 취소한다.
       if (event.sessions.length) {
         const upcoming = event.sessions.filter((session) => Date.parse(session.endsAt) > Date.now());
-        if (!upcoming.length) {
-          const endedAt = event.sessions.map((session) => session.endsAt).sort().at(-1);
-          let suggestion = null;
-          try {
-            suggestion = await findNextEdition({ title: event.title, venue: event.sessions[0].venue,
-              category: event.category, endedAt });
-          } catch (error) { console.error('Next edition search:', error instanceof Error ? error.message : error); }
-          return send(res, 200, { status: 'past_event', title: event.title, endedAt, suggestion });
-        }
+        if (!upcoming.length) return send(res, 200, { status: 'past_event', title: event.title,
+          endedAt: event.sessions.map((session) => session.endsAt).sort().at(-1) });
         event.sessions = upcoming;
       }
       return send(res, 200, { status: 'event', event });
