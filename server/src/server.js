@@ -5,7 +5,7 @@ import { categories, cleanExtraction, validateSavedEvent } from './domain.js';
 import { documentInput } from './document.js';
 import { store } from './store.js';
 import { CloudStore, importCloudCatalog } from './cloud-store.js';
-import { discoverEvents, discoveryTopic } from './discovery.js';
+import { discoverEvents, discoveryTopic, discoverySubject } from './discovery.js';
 import { categoryGroup } from './categories.js';
 import { discoverSemaExhibitions } from './sema.js';
 import { formats, domains } from './classification.js';
@@ -26,21 +26,27 @@ async function discoverFor(data, userId) {
   const interests = new Map((await data.interests(userId)).map((row) => [row.interestKey, row.score]));
   const topic = discoveryTopic(interests);
   if (!topic) return false;
-  const previous = discoveryJobs.get(topic);
-  if (previous && Date.now() - previous.startedAt < 12 * 60 * 60 * 1000) {
+  const subject = discoverySubject(interests);
+  const jobKey = `${topic}:${subject}`;
+  const previous = discoveryJobs.get(jobKey);
+  if (previous && Date.now() - previous.startedAt < previous.retryAfter) {
     await previous.promise;
     return false;
   }
+  const job = { startedAt: Date.now(), retryAfter: 15 * 60 * 1000, promise: null };
   const promise = (async () => {
     const candidates = categoryGroup(topic) === '전시'
-      ? await discoverSemaExhibitions() : await discoverEvents(topic);
+      ? await discoverSemaExhibitions() : await discoverEvents(topic, { subject });
     if (!candidates.length) return;
     const catalog = await data.rows('events', { source_type: 'eq.catalog' });
     const existing = new Set(catalog.filter((event) => Date.parse(event.end_at) > Date.now())
       .map((event) => event.source_url).filter(Boolean));
     await importCloudCatalog(candidates.filter((event) => !existing.has(event.sourceUrl)));
+    job.retryAfter = 12 * 60 * 60 * 1000;
   })();
-  discoveryJobs.set(topic, { startedAt: Date.now(), promise });
+  job.promise = promise;
+  discoveryJobs.set(jobKey, job);
+  promise.catch(() => { if (discoveryJobs.get(jobKey) === job) discoveryJobs.delete(jobKey); });
   await promise;
   return true;
 }
